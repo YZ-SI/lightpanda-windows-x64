@@ -617,15 +617,18 @@ fn paddingTwoDigits(value: usize) [2]u8 {
 pub fn localTime(ts: i64) !LibcTm {
     var tm: LibcTm = undefined;
     if (comptime builtin.os.tag == .windows) {
-        // localtime_r is POSIX-only; the MSVC CRT equivalent is
-        // localtime_s, with the arguments swapped and an errno_t
-        // (0 on success) in place of the NULL-on-failure return.
-        // tm_gmtoff/tm_zone have no MSVC counterpart and stay
-        // undefined; no caller reads them (Document.zig formats
-        // only the date and time fields).
-        if (localtime_s(&tm, &ts) != 0) {
-            return error.InvalidArgument;
-        }
+        var offset: i32 = undefined;
+        const rc = if (lp_win_v8_timezone_offset(ts, &offset) != 0) override: {
+            // Match the IANA time zone used by V8, including daylight saving,
+            // when formatting values such as document.lastModified.
+            const adjusted = std.math.add(i64, ts, offset) catch return error.InvalidArgument;
+            break :override lp_win_gmtime(&tm, &adjusted);
+        } else lp_win_localtime(&tm, &ts, &offset);
+        if (rc != 0) return error.InvalidArgument;
+        // Windows struct tm omits these fields. Agent reads both when it
+        // formats the current date and UTC offset.
+        tm.tm_gmtoff = offset;
+        tm.tm_zone = null;
     } else {
         if (localtime_r(&ts, &tm) == null) {
             return error.InvalidArgument;
@@ -648,7 +651,9 @@ pub const LibcTm = extern struct {
     tm_zone: ?[*:0]const u8,
 };
 extern "c" fn localtime_r(timep: *const i64, result: *LibcTm) ?*LibcTm;
-extern "c" fn localtime_s(result: *LibcTm, timep: *const i64) c_int;
+extern "c" fn lp_win_localtime(result: *LibcTm, timep: *const i64, offset_seconds: *i32) c_int;
+extern "c" fn lp_win_gmtime(result: *LibcTm, timep: *const i64) c_int;
+extern "c" fn lp_win_v8_timezone_offset(timestamp: i64, offset_seconds: *i32) c_int;
 
 const Parser = struct {
     input: []const u8,

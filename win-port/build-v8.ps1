@@ -85,8 +85,10 @@ solutions = [
     }
     New-Item -ItemType Directory -Path 'zig', 'out/lp-win-x64' -Force | Out-Null
 
+    & $pythonExe (Join-Path $PSScriptRoot 'windows-v8-binding.py') (Join-Path $wrapper 'src/binding.cpp') (Join-Path $source 'binding.cpp')
+    if ($LASTEXITCODE -ne 0) { throw 'The Windows V8 callback and time zone adaptation failed.' }
+
     foreach ($entry in @(
-        @{ Source = 'src/binding.cpp'; Destination = 'binding.cpp' }
         @{ Source = 'src/inspector.h'; Destination = 'inspector.h' }
         @{ Source = 'build-tools/.gn'; Destination = 'zig/.gn' }
     )) {

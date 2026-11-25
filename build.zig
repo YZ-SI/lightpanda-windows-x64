@@ -124,6 +124,7 @@ pub fn build(b: *Build) !void {
             lightpanda_module.addLibraryPath(.{ .cwd_relative = path });
         }
         lightpanda_module.linkSystemLibrary("bcrypt", .{});
+        lightpanda_module.linkSystemLibrary("advapi32", .{});
         lightpanda_module.linkSystemLibrary("iphlpapi", .{});
         lightpanda_module.linkSystemLibrary("vcruntime", .{});
         lightpanda_module.linkSystemLibrary("dbghelp", .{});

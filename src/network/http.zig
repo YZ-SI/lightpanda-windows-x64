@@ -507,7 +507,7 @@ pub const Connection = struct {
         // TLS.
         if (config.tlsVerifyHost()) {
             // Provide certificate store to connection's SSL_CTX.
-            try libcurl.curl_easy_setopt(self._easy, .ssl_ctx_function, &(struct {
+            const TLS = struct {
                 fn wrap(
                     _: *libcurl.Curl,
                     raw_ssl_ctx: *anyopaque,
@@ -522,7 +522,23 @@ pub const Connection = struct {
                     }
                     return libcurl.CURLE.OK;
                 }
-            }).wrap);
+                fn wrapWithWindowsTrust(
+                    curl: *libcurl.Curl,
+                    raw_ssl_ctx: *anyopaque,
+                    raw_x509_store: *anyopaque,
+                ) callconv(.c) libcurl.CurlCode {
+                    const result = wrap(curl, raw_ssl_ctx, raw_x509_store);
+                    if (result == libcurl.CURLE.OK) {
+                        @import("WindowsTrust.zig").install(@ptrCast(raw_ssl_ctx));
+                    }
+                    return result;
+                }
+            };
+            const ssl_ctx_function = if (comptime builtin.os.tag == .windows)
+                if (config.customCertStore() == null) &TLS.wrapWithWindowsTrust else &TLS.wrap
+            else
+                &TLS.wrap;
+            try libcurl.curl_easy_setopt(self._easy, .ssl_ctx_function, ssl_ctx_function);
             // Pass our store to CURLOPT_SSL_CTX_FUNCTION.
             try libcurl.curl_easy_setopt(self._easy, .ssl_ctx_data, certificates.store);
         } else {

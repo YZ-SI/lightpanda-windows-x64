@@ -431,9 +431,14 @@ fn runWebApiTest(test_file: [:0]const u8, timeout_ms: u32) !void {
     const page = try test_session.createPage();
     defer page.close();
 
+    const url_path = if (comptime @import("builtin").os.tag == .windows) path: {
+        const normalized = try arena_allocator.dupe(u8, test_file);
+        std.mem.replaceScalar(u8, normalized, '\\', '/');
+        break :path normalized;
+    } else test_file;
     const url = try arena_allocator.printSentinel(
         "http://127.0.0.1:9582/{s}",
-        .{test_file},
+        .{url_path},
         0,
     );
 

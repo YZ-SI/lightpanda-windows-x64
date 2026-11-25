@@ -53,19 +53,15 @@ pub fn init(opts: Options) !Platform {
         v8.v8__V8__SetFlagsFromString(flags.ptr, flags.len);
     }
 
-    if (opts.timezone) |id| {
-        if (comptime builtin.os.tag == .windows) {
-            // The MSVC CRT has no setenv; _putenv_s is the
-            // equivalent and updates the process environment
-            // that InitializeICU and child processes read.
-            _ = _putenv_s("TZ", id);
-        } else {
-            _ = setenv("TZ", id, 1);
-        }
+    if (comptime builtin.os.tag != .windows) {
+        if (opts.timezone) |id| _ = setenv("TZ", id, 1);
     }
 
     if (v8.v8__V8__InitializeICU() == false) {
         return error.FailedToInitializeICU;
+    }
+    if (comptime builtin.os.tag == .windows) {
+        if (opts.timezone) |id| lp_win_v8_set_default_timezone(id);
     }
     if (opts.locale) |tag| {
         if (!v8.v8__V8__SetDefaultLocale(tag)) return error.InvalidLocale;
@@ -85,4 +81,4 @@ pub fn deinit(self: Platform) void {
 }
 
 extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, override: c_int) c_int;
-extern fn _putenv_s(name: [*:0]const u8, value: [*:0]const u8) c_int;
+extern "c" fn lp_win_v8_set_default_timezone(id: [*:0]const u8) void;

@@ -42,21 +42,6 @@ const Queue = @import("Queue.zig").Queue;
 const log = lp.log;
 const posix = std.posix;
 
-// std.posix.setsockopt is a compileError on Windows; ws2_32's
-// setsockopt is not wrapped by std. SOCKET is an integer handle
-// (UINT_PTR), so it is passed by value.
-extern "ws2_32" fn setsockopt(
-    s: usize,
-    level: c_int,
-    optname: c_int,
-    optval: [*]const u8,
-    optlen: c_int,
-) c_int;
-
-fn winSetsockopt(sock: posix.socket_t, level: i32, optname: u32, opt: []const u8) !void {
-    if (setsockopt(@intFromPtr(sock), level, @intCast(optname), opt.ptr, @intCast(opt.len)) != 0) return error.Unexpected;
-}
-
 const HttpServer = @This();
 
 const ns_per_ms = std.time.ns_per_ms;
@@ -177,15 +162,15 @@ pub const SessionInfo = struct {
 allocator: std.mem.Allocator,
 app: *App,
 
-// Blocking listener owned by run(); -1 until bound. stop() unblocks the
-// accept from another thread.
-listener: std.atomic.Value(posix.socket_t) = if (builtin.os.tag == .windows)
-    // INVALID_SOCKET: socket_t is a HANDLE on
-    // Windows, ~0 is its invalid sentinel.
-    .init(@ptrFromInt(@as(usize, @bitCast(@as(isize, -1)))))
-else
-    .init(-1),
+// POSIX stop() unblocks the accept from another thread. The Windows
+// accept loop observes shutting_down directly.
+listener: if (builtin.os.tag == .windows) void else std.atomic.Value(posix.socket_t) =
+    if (builtin.os.tag == .windows) {} else .init(-1),
 shutting_down: std.atomic.Value(bool) = .init(false),
+windows_connections: if (builtin.os.tag == .windows) struct {
+    io: std.Io.Threaded,
+    group: std.Io.Group = .init,
+} else void,
 
 // Registration happens in onAccept — the same (accept) thread deinit runs
 // on — so a connection is always counted and its socket registered before
@@ -219,7 +204,9 @@ pub fn init(allocator: std.mem.Allocator, app: *App, session_timeout_ms: ?u64) !
         .allocator = allocator,
         .app = app,
         .session_timeout_ms = session_timeout_ms,
+        .windows_connections = if (comptime builtin.os.tag == .windows) .{ .io = .init(allocator, .{}) } else {},
     };
+    errdefer if (comptime builtin.os.tag == .windows) self.windows_connections.io.deinit();
     errdefer self.workers.deinit(allocator);
 
     var start: Start = .{};
@@ -237,19 +224,24 @@ pub fn init(allocator: std.mem.Allocator, app: *App, session_timeout_ms: ?u64) !
 }
 
 /// Runs after the accept loop has stopped, so no new connection can arrive.
-/// Shutting the sockets down unblocks the connection threads' pending reads;
-/// the workers must outlive their drain because a connection thread may
-/// still be waiting on its job.
+/// Windows cancels pending overlapped I/O through its connection task group.
+/// POSIX wakes blocked connection threads by shutting down their sockets.
+/// Workers must outlive both because a connection may be waiting on a job.
 pub fn deinit(self: *HttpServer) void {
-    {
-        self.conn_mutex.lockUncancelable(lp.io);
-        defer self.conn_mutex.unlock(lp.io);
-        for (self.conns.items) |socket| {
-            sys_net.shutdown(socket, .both) catch {};
+    if (comptime builtin.os.tag == .windows) {
+        self.windows_connections.group.cancel(self.windows_connections.io.io());
+        self.windows_connections.io.deinit();
+    } else {
+        {
+            self.conn_mutex.lockUncancelable(lp.io);
+            defer self.conn_mutex.unlock(lp.io);
+            for (self.conns.items) |socket| {
+                sys_net.shutdown(socket, .both) catch {};
+            }
         }
-    }
-    while (self.active_conns.load(.acquire) > 0) {
-        lp.io.sleep(.fromMilliseconds(10), .awake) catch {};
+        while (self.active_conns.load(.acquire) > 0) {
+            lp.io.sleep(.fromMilliseconds(10), .awake) catch {};
+        }
     }
 
     {
@@ -442,61 +434,80 @@ pub fn run(self: *HttpServer, address: sys_net.IpAddress) !void {
         posix.SOCK.STREAM
     else
         posix.SOCK.STREAM | posix.SOCK.CLOEXEC;
-    const listener = try sys_net.socket(sys_net.family(&address), sock_flags, posix.IPPROTO.TCP);
-    errdefer _ = std.c.close(listener);
+    const listener = blk: {
+        const listener = try sys_net.socket(sys_net.family(&address), sock_flags, posix.IPPROTO.TCP);
+        errdefer sys_net.close(listener);
 
-    if (comptime builtin.os.tag == .windows) {
-        try winSetsockopt(listener, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
-    } else {
-        try posix.setsockopt(listener, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
-    }
-    if (@hasDecl(posix.TCP, "NODELAY")) {
-        if (comptime builtin.os.tag == .windows) {
-            try winSetsockopt(listener, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1)));
-        } else {
-            try posix.setsockopt(listener, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1)));
+        try sys_net.setListenerAddressPolicy(listener);
+        if (@hasDecl(posix.TCP, "NODELAY")) {
+            try sys_net.setSocketOption(listener, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1)));
         }
-    }
 
-    const sa = sys_net.sockaddrFromAddress(&address);
-    try sys_net.bind(listener, sa.ptr(), sa.len);
-    try sys_net.listen(listener, self.app.config.maxPendingConnections());
+        const sa = sys_net.sockaddrFromAddress(&address);
+        try sys_net.bind(listener, sa.ptr(), sa.len);
+        try sys_net.listen(listener, self.app.config.maxPendingConnections());
+        if (comptime builtin.os.tag == .windows) try sys_net.setWindowsNonblocking(listener, true);
 
-    // --port 0 asks the OS for an ephemeral port; log the one we actually got.
-    log.note(.mcp, "mcp http server running", .{ .address = try sys_net.boundAddress(listener) });
+        // --port 0 asks the OS for an ephemeral port; log the one we actually got.
+        log.note(.mcp, "mcp http server running", .{ .address = try sys_net.boundAddress(listener) });
+        break :blk listener;
+    };
 
-    self.listener.store(listener, .release);
-    // On non-Linux stop() closes the listener itself to unblock accept.
-    defer if (builtin.target.os.tag == .linux) {
-        _ = std.c.close(listener);
+    if (comptime builtin.os.tag != .windows) self.listener.store(listener, .release);
+    defer switch (builtin.os.tag) {
+        .windows, .linux => sys_net.close(listener),
+        else => {}, // stop() already closed the listener.
     };
 
     while (!self.shutting_down.load(.acquire)) {
+        // The accept thread owns the Winsock listener until it exits. A
+        // bounded wait lets stop() interrupt it without closing it in use.
+        if (comptime builtin.os.tag == .windows) {
+            if (!try sys_net.waitWindowsReadable(listener, 100)) continue;
+            if (self.shutting_down.load(.acquire)) return;
+        }
         const socket = sys_net.accept(listener, null, null, 0) catch |err| {
             if (self.shutting_down.load(.acquire)) {
                 return;
             }
             switch (err) {
+                error.WouldBlock => {},
                 error.ConnectionAborted => log.debug(.mcp, "accept connection aborted", .{}),
                 else => log.err(.mcp, "accept error", .{ .err = err }),
             }
             continue;
         };
+        if (comptime builtin.os.tag == .windows) {
+            // Winsock accept inherits the listener's nonblocking mode.
+            sys_net.setWindowsNonblocking(socket, false) catch |err| {
+                sys_net.close(socket);
+                log.err(.mcp, "configure accepted socket", .{ .err = err });
+                continue;
+            };
+        }
         self.onAccept(socket);
     }
 }
 
-/// Make run() return. Linux wakes a blocked accept() on shutdown(); BSD/macOS
-/// only on close(), in which case run() must not close it again.
+/// Make run() return. Windows checks the flag in its accept loop. Linux wakes
+/// on shutdown(); BSD/macOS wake on close() and leave ownership to stop().
 pub fn stop(self: *HttpServer) void {
     self.shutting_down.store(true, .release);
     switch (builtin.target.os.tag) {
+        .windows => {},
         .linux => sys_net.shutdown(self.listener.load(.acquire), .recv) catch {},
         else => _ = std.c.close(self.listener.load(.acquire)),
     }
 }
 
 fn onAccept(self: *HttpServer, socket: posix.socket_t) void {
+    if (comptime builtin.os.tag == .windows) {
+        self.windows_connections.group.concurrent(self.windows_connections.io.io(), handleConn, .{ self, socket }) catch |err| {
+            log.warn(.mcp, "mcp spawn", .{ .err = err });
+            sys_net.close(socket);
+        };
+        return;
+    }
     {
         self.conn_mutex.lockUncancelable(lp.io);
         defer self.conn_mutex.unlock(lp.io);
@@ -636,17 +647,20 @@ fn isInitialize(arena: std.mem.Allocator, body: []const u8) bool {
 }
 
 fn handleConn(self: *HttpServer, socket: posix.socket_t) void {
-    defer _ = self.active_conns.fetchSub(1, .release);
+    const net_io = if (comptime builtin.os.tag == .windows) self.windows_connections.io.io() else lp.io;
+    defer if (comptime builtin.os.tag != .windows) {
+        _ = self.active_conns.fetchSub(1, .release);
+    };
     const stream: std.Io.net.Stream = .{ .socket = .{ .handle = socket, .address = .{ .ip4 = .unspecified(0) } } };
-    defer stream.close(lp.io);
+    defer stream.close(net_io);
     // Runs before close (defers are LIFO): deinit's shutdown sweep must
     // never see an fd that has been closed and possibly reused.
-    defer self.unregister(socket);
+    defer if (comptime builtin.os.tag != .windows) self.unregister(socket);
 
     var recv_buf: [16 * 1024]u8 = undefined;
     var send_buf: [16 * 1024]u8 = undefined;
-    var stream_reader = stream.reader(lp.io, &recv_buf);
-    var stream_writer = stream.writer(lp.io, &send_buf);
+    var stream_reader = stream.reader(net_io, &recv_buf);
+    var stream_writer = stream.writer(net_io, &send_buf);
     var http_server = std.http.Server.init(&stream_reader.interface, &stream_writer.interface);
 
     var arena: std.heap.ArenaAllocator = .init(self.allocator);

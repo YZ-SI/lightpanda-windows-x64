@@ -27,15 +27,19 @@ void *__imp_strtold = (void *)strtold;
 
 /* localtime_s: not in msvcrt.dll nor ucrt.lib present here; Win32 API impl. */
 #undef localtime_s
-int localtime_s(struct tm *_tm, const time_t *_time)
+static int filetime_to_tm(struct tm *_tm, const time_t *_time, BOOL local, int *offset)
 {
     SYSTEMTIME st;
     FILETIME ft, lft;
     unsigned __int64 t = (unsigned __int64)*_time * 10000000ULL + 116444736000000000ULL;
     ft.dwLowDateTime = (DWORD)t;
     ft.dwHighDateTime = (DWORD)(t >> 32);
-    if (!FileTimeToLocalFileTime(&ft, &lft)) return 1;
-    if (!FileTimeToSystemTime(&lft, &st)) return 1;
+    if (local && !FileTimeToLocalFileTime(&ft, &lft)) return 1;
+    if (!FileTimeToSystemTime(local ? &lft : &ft, &st)) return 1;
+    if (local && offset) {
+        unsigned __int64 local_ticks = ((unsigned __int64)lft.dwHighDateTime << 32) | lft.dwLowDateTime;
+        *offset = (int)(((__int64)local_ticks - (__int64)t) / 10000000);
+    }
     _tm->tm_year = st.wYear - 1900;
     _tm->tm_mon = st.wMonth - 1;
     _tm->tm_mday = st.wDay;
@@ -46,4 +50,19 @@ int localtime_s(struct tm *_tm, const time_t *_time)
     _tm->tm_yday = 0;
     _tm->tm_isdst = -1;
     return 0;
+}
+
+int localtime_s(struct tm *_tm, const time_t *_time)
+{
+    return filetime_to_tm(_tm, _time, TRUE, NULL);
+}
+
+int lp_win_localtime(struct tm *_tm, const time_t *_time, int *offset)
+{
+    return filetime_to_tm(_tm, _time, TRUE, offset);
+}
+
+int lp_win_gmtime(struct tm *_tm, const time_t *_time)
+{
+    return filetime_to_tm(_tm, _time, FALSE, NULL);
 }

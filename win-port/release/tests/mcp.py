@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -39,8 +40,10 @@ with socket.socket() as reserve:
     reserve.bind(("127.0.0.1", 0))
     port = reserve.getsockname()[1]
 
-server = subprocess.Popen([exe, "mcp", "--host", "127.0.0.1", "--port", str(port)],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+argv = [exe, "mcp", "--host", "127.0.0.1", "--port", str(port)]
+flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+server = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          env=env, creationflags=flags)
 try:
     for _ in range(80):
         if server.poll() is not None:
@@ -69,6 +72,17 @@ try:
     _, available = request(tools, session)
     check_tools(json.loads(available))
     print("PASS MCP HTTP initialize, session, and tools/list")
+
+    with socket.create_connection(("127.0.0.1", port), timeout=2) as pending:
+        pending.sendall(b"POST /mcp HTTP/1.1\r\nHost: localhost\r\n")
+        duplicate = subprocess.run(argv, capture_output=True, env=env, timeout=10)
+        assert duplicate.returncode != 0 and b"AddressInUse" in duplicate.stderr, duplicate.stderr
+        print("PASS MCP HTTP rejects a duplicate listener")
+
+        server.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGTERM)
+        assert server.wait(timeout=10) == 0, server.returncode
+        print("PASS MCP HTTP graceful shutdown with a pending read")
 finally:
-    server.terminate()
-    server.wait(timeout=10)
+    if server.poll() is None:
+        server.kill()
+        server.wait(timeout=10)

@@ -127,6 +127,7 @@ pub fn socket(domain: u32, socket_type: u32, protocol: u32) !socket_t {
 pub fn bind(sock: socket_t, addr: *const posix.sockaddr, len: posix.socklen_t) !void {
     const rc = c.bind(sock, addr, len);
     if (rc != 0) {
+        if (comptime native_os == .windows) return wsaError(WSAGetLastError());
         return errnoError(c.errno(rc));
     }
 }
@@ -134,6 +135,7 @@ pub fn bind(sock: socket_t, addr: *const posix.sockaddr, len: posix.socklen_t) !
 pub fn listen(sock: socket_t, backlog: u31) !void {
     const rc = c.listen(sock, backlog);
     if (rc != 0) {
+        if (comptime native_os == .windows) return wsaError(WSAGetLastError());
         return errnoError(c.errno(rc));
     }
 }
@@ -237,16 +239,46 @@ extern "ws2_32" fn send(s: usize, buf: [*]const u8, len: c_int, flags: c_int) c_
 extern "ws2_32" fn recv(s: usize, buf: [*]u8, len: c_int, flags: c_int) c_int;
 extern "ws2_32" fn closesocket(s: usize) c_int;
 extern "ws2_32" fn setsockopt(s: usize, level: c_int, name: c_int, value: [*]const u8, len: c_int) c_int;
+extern "ws2_32" fn ioctlsocket(s: usize, cmd: c_long, arg: *c_ulong) c_int;
+extern "ws2_32" fn WSAPoll(fds: *WindowsPollFd, count: c_ulong, timeout_ms: c_int) c_int;
+
+const WindowsPollFd = extern struct {
+    socket: usize,
+    events: c_short,
+    revents: c_short = 0,
+};
+
+pub fn setWindowsNonblocking(sock: socket_t, enable: bool) !void {
+    const fionbio: c_long = @bitCast(@as(u32, 0x8004667E));
+    var mode: c_ulong = @intFromBool(enable);
+    if (ioctlsocket(@intFromPtr(sock), fionbio, &mode) != 0) return wsaError(WSAGetLastError());
+}
+
+pub fn waitWindowsReadable(sock: socket_t, timeout_ms: c_int) !bool {
+    const poll_read_normal = 0x0100;
+    var fd: WindowsPollFd = .{ .socket = @intFromPtr(sock), .events = poll_read_normal };
+    const rc = WSAPoll(&fd, 1, timeout_ms);
+    if (rc < 0) return wsaError(WSAGetLastError());
+    if (rc > 0 and fd.revents & poll_read_normal == 0) return error.Unexpected;
+    return rc > 0;
+}
 
 pub fn setSocketOption(sock: socket_t, level: i32, name: u32, value: []const u8) !void {
     if (comptime native_os == .windows) {
-        if (setsockopt(@intFromPtr(sock), level, @intCast(name), value.ptr, @intCast(value.len)) != 0) {
+        if (setsockopt(@intFromPtr(sock), level, @bitCast(name), value.ptr, @intCast(value.len)) != 0) {
             return wsaError(WSAGetLastError());
         }
         return;
     }
     return posix.setsockopt(sock, level, name, value);
 }
+
+pub fn setListenerAddressPolicy(sock: socket_t) !void {
+    // Winsock SO_REUSEADDR permits conflicting TCP listeners.
+    const option: u32 = if (comptime native_os == .windows) ~@as(u32, posix.SO.REUSEADDR) else posix.SO.REUSEADDR;
+    try setSocketOption(sock, posix.SOL.SOCKET, option, &std.mem.toBytes(@as(c_int, 1)));
+}
+
 extern "ws2_32" fn WSAGetLastError() c_int;
 
 const WSAEINTR: c_int = 10004;
@@ -255,6 +287,7 @@ const WSAEINVAL: c_int = 10022;
 const WSAEMFILE: c_int = 10024;
 const WSAEWOULDBLOCK: c_int = 10035;
 const WSAENOTSOCK: c_int = 10038;
+const WSAEADDRINUSE: c_int = 10048;
 const WSAECONNABORTED: c_int = 10053;
 const WSAECONNRESET: c_int = 10054;
 const WSAENOBUFS: c_int = 10055;
@@ -441,6 +474,7 @@ fn wsaError(code: c_int) anyerror {
         WSAENOBUFS => error.SystemResources,
         WSAEWOULDBLOCK => error.WouldBlock,
         WSAENOTSOCK => error.NotASocket,
+        WSAEADDRINUSE => error.AddressInUse,
         WSAENOTCONN => error.SocketNotConnected,
         WSAECONNABORTED => error.ConnectionAborted,
         WSAECONNRESET => error.ConnectionResetByPeer,

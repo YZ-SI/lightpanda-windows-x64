@@ -20,17 +20,17 @@ Connect Puppeteer or Playwright over CDP at `http://127.0.0.1:9222`. Run `.\ligh
 
 | Item | Result |
 | --- | --- |
-| Community version | `1.0.5+windows.2` |
+| Community version | `1.0.5+windows.3` |
 | Official base | [Lightpanda 1.0.5](https://github.com/lightpanda-io/browser/releases/tag/1.0.5) |
 | Tested platform | Windows 10 x64 |
-| Windows upstream subsets | 24 URL tests and 4 fetch tests |
+| Windows upstream Web API tests | 218 passed, 7 skipped |
 | Linux upstream suite | 2,435 passed, 7 skipped on both the upstream and port source trees |
-| Smoke tests | HTML and Markdown dumps, HTTPS, fetch hard deadline, Puppeteer and Playwright CDP, MCP stdio and HTTP, console shutdown |
-| Linux comparison | HTML and Markdown output matched on a JavaScript fixture after line-ending normalization |
+| Smoke tests | HTTPS, fetch hard deadline, CDP over TCP and a local socket, MCP stdio and HTTP, duplicate listeners, console shutdown |
+| Linux comparison | HTML and Markdown output matched for inline JavaScript, static and dynamic imports, and the IANA time zone fixture after line-ending normalization |
 
-The `fetch --terminate-ms` hard deadline uses a native Windows timer and the existing V8 termination path. The full suite still has POSIX-only test fixtures. Windows Web API testing has a known module compatibility issue, and clean Windows host validation is pending.
+The Windows port uses the host's certificate trust policy and follows Winsock's local socket rules. The full upstream suite still has POSIX-only test fixtures. Clean Windows host validation is pending.
 
-The [tested source commit](https://github.com/YZ-SI/lightpanda-windows-x64/commit/cdddc1937a7f024c18891368d3425cea4354f86c) is based on upstream commit `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`. The [dependency record](win-port/upstream.json) identifies the corresponding V8 and toolchain versions.
+The port is based on upstream commit `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`. The [dependency record](win-port/upstream.json) identifies the corresponding V8 and toolchain versions.
 
 ## Attribution and license
 

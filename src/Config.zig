@@ -1376,9 +1376,18 @@ pub fn parseArgs(allocator: Allocator, proc_args: std.process.Args) !Config {
                 log.fatal(.app, "invalid argument", .{ .arg = "--unix-socket", .hint = "cannot be combined with --host, --port or --advertise-host" });
                 return error.InvalidArgument;
             }
-            // `:` would end the path in the advertised ws+unix:// URL.
-            if (std.fs.path.isAbsolute(path) == false or std.mem.findScalar(u8, path, ':') != null) {
-                log.fatal(.app, "invalid argument", .{ .arg = "--unix-socket", .value = path, .hint = "must be an absolute path without ':'" });
+            // The advertised ws+unix URL escapes a Windows drive separator.
+            const valid = if (comptime @import("builtin").os.tag == .windows)
+                path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and
+                    std.fs.path.isAbsolute(path) and std.mem.findScalar(u8, path[2..], ':') == null
+            else
+                std.fs.path.isAbsolute(path) and std.mem.findScalar(u8, path, ':') == null;
+            if (!valid) {
+                const hint = if (comptime @import("builtin").os.tag == .windows)
+                    "must be an absolute path on a local drive"
+                else
+                    "must be an absolute path without ':'";
+                log.fatal(.app, "invalid argument", .{ .arg = "--unix-socket", .value = path, .hint = hint });
                 return error.InvalidArgument;
             }
             if (path.len >= @sizeOf(@FieldType(std.posix.sockaddr.un, "path"))) {

@@ -73,7 +73,9 @@ pub fn cachedKeyPathJs(cache: *?*js.GlobalSlot, txn: *IDBTransaction, kp: ?Key.K
 
 const testing = @import("../../../../testing.zig");
 test "WebApi: IndexedDB" {
-    try testing.htmlRunner("indexeddb.html", .{});
+    // This fixture queues 48 asynchronous blocks on one page. The same
+    // assertions need more than two seconds with the Windows test runner.
+    try testing.htmlRunner("indexeddb.html", if (comptime @import("builtin").os.tag == .windows) .{ .timeout_ms = 5000 } else .{});
 }
 
 test "WebApi: IndexedDB pending request keeps its JS object alive" {

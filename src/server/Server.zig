@@ -168,7 +168,7 @@ pub fn init(app: *App, address: Address) !*Server {
 
     const ws_url = switch (address) {
         .ip => try allocator.print("ws://{s}:{d}/", .{ config.advertiseHost(), (try sys_net.boundAddress(listener)).getPort() }),
-        .unix => |path| try allocator.print("ws+unix://{s}:/", .{path}),
+        .unix => |path| try unixWebSocketUrl(allocator, path),
     };
     defer allocator.free(ws_url);
 
@@ -258,11 +258,7 @@ fn listenIp(address: sys_net.IpAddress, backlog: u31) !posix.socket_t {
     const l = try sys_net.socket(sys_net.family(&address), flags, posix.IPPROTO.TCP);
     errdefer sys_net.close(l);
 
-    if (comptime builtin.os.tag == .windows) {
-        try winSetsockopt(l, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
-    } else {
-        try posix.setsockopt(l, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
-    }
+    try sys_net.setListenerAddressPolicy(l);
     if (@hasDecl(posix.TCP, "NODELAY")) {
         if (comptime builtin.os.tag == .windows) {
             try winSetsockopt(l, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1)));
@@ -280,29 +276,81 @@ fn listenIp(address: sys_net.IpAddress, backlog: u31) !posix.socket_t {
 // An existing file at `path` fails the bind with AddressInUse: it may be
 // another server's socket, so it is never removed.
 fn listenUnix(path: [:0]const u8, backlog: u31) !posix.socket_t {
-    if (comptime builtin.os.tag == .windows) {
-        return error.Unsupported;
-    }
     var sa = std.mem.zeroes(posix.sockaddr.un);
     lp.assert(path.len < sa.path.len, "unix socket path too long", .{ .len = path.len });
     sa.family = posix.AF.UNIX;
     @memcpy(sa.path[0..path.len], path);
 
-    const flags = posix.SOCK.STREAM | posix.SOCK.CLOEXEC | posix.SOCK.NONBLOCK;
+    const flags = if (comptime builtin.os.tag == .windows)
+        posix.SOCK.STREAM
+    else
+        posix.SOCK.STREAM | posix.SOCK.CLOEXEC | posix.SOCK.NONBLOCK;
     const l = try sys_net.socket(posix.AF.UNIX, flags, 0);
     errdefer sys_net.close(l);
 
     try sys_net.bind(l, @ptrCast(&sa), @intCast(@offsetOf(posix.sockaddr.un, "path") + path.len + 1));
     errdefer std.Io.Dir.cwd().deleteFile(lp.io, path) catch {};
 
-    // Not atomic with the bind, but connecting needs write permission,
-    // which a umask rarely grants to anyone but the owner.
-    if (std.c.chmod(path.ptr, 0o600) != 0) {
+    // Apply owner-only permissions before the socket starts accepting clients.
+    if (comptime builtin.os.tag == .windows) {
+        try WindowsUnixSocket.restrictToOwner(path);
+    } else if (std.c.chmod(path.ptr, 0o600) != 0) {
         return error.SocketPermissions;
     }
     try sys_net.listen(l, backlog);
     return l;
 }
+
+fn unixWebSocketUrl(allocator: Allocator, path: []const u8) ![]const u8 {
+    if (comptime builtin.os.tag != .windows) return allocator.print("ws+unix://{s}:/", .{path});
+
+    var url: std.Io.Writer.Allocating = .init(allocator);
+    defer url.deinit();
+    const writer = &url.writer;
+    try writer.writeAll("ws+unix:///");
+    for (path) |byte| {
+        switch (byte) {
+            '\\' => try writer.writeByte('/'),
+            'a'...'z', 'A'...'Z', '0'...'9', '-', '_', '.', '~', '/' => try writer.writeByte(byte),
+            else => try writer.print("%{X:0>2}", .{byte}),
+        }
+    }
+    try writer.writeAll(":/");
+    return url.toOwnedSlice();
+}
+
+const WindowsUnixSocket = struct {
+    extern "advapi32" fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        sddl: [*:0]const u16,
+        revision: u32,
+        security_descriptor: **anyopaque,
+        size: ?*u32,
+    ) callconv(.winapi) c_int;
+    extern "advapi32" fn SetFileSecurityW(
+        path: [*:0]const u16,
+        flags: u32,
+        security_descriptor: *anyopaque,
+    ) callconv(.winapi) c_int;
+    extern "kernel32" fn LocalFree(memory: *anyopaque) callconv(.winapi) ?*anyopaque;
+
+    fn restrictToOwner(path: []const u8) !void {
+        var wide: [@sizeOf(@FieldType(posix.sockaddr.un, "path"))]u16 = undefined;
+        const len = try std.unicode.wtf8ToWtf16Le(&wide, path);
+        wide[len] = 0;
+
+        // Replace inherited DACL entries with an ACE for the socket owner.
+        const sddl = std.unicode.utf8ToUtf16LeStringLiteral("D:P(A;;GA;;;OW)");
+        var descriptor: *anyopaque = undefined;
+        if (ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, &descriptor, null) == 0) {
+            return error.SocketPermissions;
+        }
+        defer _ = LocalFree(descriptor);
+        const protected_dacl = 0x80000004;
+        if (SetFileSecurityW(wide[0..len :0].ptr, protected_dacl, descriptor) == 0) {
+            return error.SocketPermissions;
+        }
+    }
+};
 
 fn closeListener(listener: posix.socket_t, unix_path: ?[:0]const u8) void {
     sys_net.close(listener);
