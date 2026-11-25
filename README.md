@@ -28,7 +28,7 @@ Connect Puppeteer or Playwright over CDP at `http://127.0.0.1:9222`. Run `.\ligh
 | Smoke tests | HTTPS, fetch hard deadline, CDP over TCP and a local socket, MCP stdio and HTTP, duplicate listeners, console shutdown |
 | Linux comparison | HTML and Markdown output matched for inline JavaScript, static and dynamic imports, and the IANA time zone fixture after line-ending normalization |
 
-The Windows port uses the host's certificate trust policy and follows Winsock's local socket rules. The full upstream suite still has POSIX-only test fixtures. Clean Windows host validation is pending.
+The Windows port uses the host's certificate trust policy and follows Winsock's local socket rules. The full upstream test suite stopped at compilation on native Windows with 29 diagnostics from test code, including POSIX `socketpair`, file permission assertions, and Windows UTF-16 argument handling. Clean Windows installation testing is pending.
 
 The ZIP was built from [community commit `4c3c60af6`](https://github.com/YZ-SI/lightpanda-windows-x64/commit/4c3c60af6170834a7139ec9dd01a577040699978), based on upstream commit `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`. The Release includes the source patch, build record and SHA-256 checksums. The [dependency record](win-port/upstream.json) identifies the corresponding V8 and toolchain versions.
 

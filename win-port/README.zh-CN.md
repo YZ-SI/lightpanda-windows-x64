@@ -14,11 +14,14 @@
 
 Puppeteer 和 Playwright 可通过 CDP 连接 `http://127.0.0.1:9222`。MCP stdio 可通过 `.\lightpanda.exe mcp` 启动。
 
+- `fetch --terminate-ms 5000` 给抓取设置 5 秒硬时限。到期时，Windows 定时器触发 V8 中断，可停止正在运行的 JavaScript，包括死循环。
+- `serve --unix-socket C:\Temp\lightpanda.sock` 可以在本地磁盘上创建套接字。请使用绝对路径，并确保父目录已存在。客户端需要支持 Winsock `AF_UNIX`。常规 Puppeteer 和 Playwright 连接可使用上面的 TCP 地址。
+
 ## 验证与维护
 
 `1.0.5+windows.3` 来自[社区提交 `4c3c60af6`](https://github.com/YZ-SI/lightpanda-windows-x64/commit/4c3c60af6170834a7139ec9dd01a577040699978)，基于官方 [1.0.5](https://github.com/lightpanda-io/browser/releases/tag/1.0.5) 的提交 `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`。Windows 10 x64 上的上游 Web API、URL 和抓取子集合计通过 246 项，跳过 7 项。两端使用同一个夹具，验证内联脚本、静态和动态导入、IANA 时区及文档时间。统一换行符后，HTML 和 Markdown 输出与官方 Linux 版一致。
 
-`fetch --terminate-ms` 使用原生 Windows 定时器触发 V8 中断。`serve --unix-socket` 支持本地盘符路径，需要客户端支持 Winsock `AF_UNIX`。Windows 全量测试仍有 POSIX 测试夹具待适配。干净环境复测待完成。
+原生 Windows 全量测试在编译阶段报告 29 条诊断，尚未进入测试执行。待适配的测试代码包括 POSIX `socketpair`、文件权限断言和 Windows UTF-16 命令行参数。移植源码在 Linux 上运行全量测试，通过 2,435 项，跳过 7 项。干净 Windows 安装环境的复测待完成。
 
 发布附件包含源码补丁、构建记录和 SHA-256 校验文件。也可以[从源码构建](README.md)，或查看[依赖锁定记录](upstream.json)和[上游同步、构建与验收流程](release/README.md)。
 

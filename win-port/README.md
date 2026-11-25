@@ -17,11 +17,11 @@ The browser build writes `zig-out/bin/lightpanda.exe`. It generates a local impo
 
 ## Test and update
 
-Run selected upstream tests through `build.ps1 -TestFilter 'WebApi:'` or `build.ps1 -TestFilter 'URL:'`. Omit `-Version` for the upstream test run so that navigator assertions see the upstream development version. The Windows test runner uses one process. Tests that directly use POSIX facilities such as `socketpair` or process-shared `mmap` require further Windows test-fixture work.
+Run selected upstream tests through `build.ps1 -TestFilter 'WebApi:'` or `build.ps1 -TestFilter 'URL:'`. Omit `-Version` for the upstream test run so that navigator assertions see the upstream development version. The Windows test runner uses one process. The full native Windows suite stopped at compilation with 29 diagnostics, including POSIX `socketpair`, file permission assertions, and Windows UTF-16 argument handling.
 
 For each new stable release, resolve the official tag to a commit and compare it with the pin in `upstream.json`. Apply the Windows patch to that commit in a new worktree and review the diff. Refresh dependency and tool pins when the upstream release changes them. Compare the Windows executable against the matching official release using deterministic fixtures. Run the native executable in a clean Windows environment before submitting a package for manual release approval.
 
-The Windows port currently supports x64. `fetch --terminate-ms` uses a Win32 timer. `--timezone` applies an IANA zone to JavaScript and document timestamps. `serve --unix-socket C:\Temp\lightpanda.sock` requires a local drive and a client that supports Winsock `AF_UNIX`. Most Windows CDP clients can connect over TCP. With the default CA configuration, a missing issuer in the browser's certificate store can be checked using the Windows system trust policy.
+The Windows port currently supports x64. `fetch --terminate-ms 5000` sets a five-second hard deadline. At expiry a Win32 timer requests a V8 interrupt to stop running JavaScript, including infinite loops. `--timezone` applies an IANA zone to JavaScript and document timestamps. `serve --unix-socket C:\Temp\lightpanda.sock` requires an absolute path on a local drive, an existing parent directory, and a client that supports Winsock `AF_UNIX`. Most Windows CDP clients can connect over TCP. With the default CA configuration, a missing issuer in the browser's certificate store can be checked using the Windows system trust policy.
 
 [release]: https://github.com/lightpanda-io/browser/releases/tag/1.0.5
 [browser-pr]: https://github.com/lightpanda-io/browser/pull/3753
