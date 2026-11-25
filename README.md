@@ -6,7 +6,7 @@ Community port of the [Lightpanda headless browser](https://github.com/lightpand
 
 ## Quick start
 
-Check [Releases](https://github.com/YZ-SI/lightpanda-windows-x64/releases) for an approved Windows ZIP. You can also [build it from source](win-port/README.md). Extract the ZIP and keep the included Visual C++ runtime DLLs alongside the executable.
+The first Windows ZIP is pending release approval. You can [build from source](win-port/README.md) now. Published ZIPs will appear under [Releases](https://github.com/YZ-SI/lightpanda-windows-x64/releases). Keep the included Visual C++ runtime DLLs next to the executable when using a ZIP.
 
 ```powershell
 .\lightpanda.exe version
@@ -27,7 +27,7 @@ Connect Puppeteer or Playwright over CDP at `http://127.0.0.1:9222`. Run `.\ligh
 | Smoke tests | HTML and Markdown dumps, HTTPS, Puppeteer and Playwright CDP, MCP stdio and HTTP, console shutdown |
 | Linux comparison | HTML and Markdown output matched on a JavaScript fixture after line-ending normalization |
 
-The full upstream test suite and a clean Windows host still need validation. The Windows build does not support the `fetch --terminate-ms` watchdog.
+The full upstream test suite and a clean Windows host still need validation. Upstream 1.0.5 implements the `fetch --terminate-ms` hard deadline with POSIX timers and signals. The native Windows port has yet to implement a Windows equivalent. [Upstream deadline implementation](https://github.com/lightpanda-io/browser/blob/1.0.5/src/Sighandler.zig)
 
 The [tested source commit](https://github.com/YZ-SI/lightpanda-windows-x64/commit/6da58fa89013f3ce15e86f4c9f85fde85f4cf8d7) is based directly on upstream commit `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`. The [dependency record](win-port/upstream.json) identifies the corresponding V8 and toolchain versions.
 
