@@ -6,7 +6,7 @@ Community port of the [Lightpanda headless browser](https://github.com/lightpand
 
 ## Quick start
 
-The first Windows ZIP is pending release approval. You can [build from source](win-port/README.md) now. Published ZIPs will appear under [Releases](https://github.com/YZ-SI/lightpanda-windows-x64/releases). Keep the included Visual C++ runtime DLLs next to the executable when using a ZIP.
+Download `lightpanda-1.0.5-windows-x64-3.zip` from the [Windows x64 release](https://github.com/YZ-SI/lightpanda-windows-x64/releases/tag/1.0.5-windows.3). Compare its hash with `SHA256SUMS.txt`, extract the whole archive, and run these commands from the extracted folder. Keep the included Visual C++ runtime DLLs next to `lightpanda.exe`.
 
 ```powershell
 .\lightpanda.exe version
@@ -23,14 +23,14 @@ Connect Puppeteer or Playwright over CDP at `http://127.0.0.1:9222`. Run `.\ligh
 | Community version | `1.0.5+windows.3` |
 | Official base | [Lightpanda 1.0.5](https://github.com/lightpanda-io/browser/releases/tag/1.0.5) |
 | Tested platform | Windows 10 x64 |
-| Windows upstream Web API tests | 218 passed, 7 skipped |
+| Windows upstream test subsets | Web API 218 passed and 7 skipped, URL 24 passed, fetch 4 passed |
 | Linux upstream suite | 2,435 passed, 7 skipped on both the upstream and port source trees |
 | Smoke tests | HTTPS, fetch hard deadline, CDP over TCP and a local socket, MCP stdio and HTTP, duplicate listeners, console shutdown |
 | Linux comparison | HTML and Markdown output matched for inline JavaScript, static and dynamic imports, and the IANA time zone fixture after line-ending normalization |
 
 The Windows port uses the host's certificate trust policy and follows Winsock's local socket rules. The full upstream suite still has POSIX-only test fixtures. Clean Windows host validation is pending.
 
-The port is based on upstream commit `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`. The [dependency record](win-port/upstream.json) identifies the corresponding V8 and toolchain versions.
+The ZIP was built from [community commit `4c3c60af6`](https://github.com/YZ-SI/lightpanda-windows-x64/commit/4c3c60af6170834a7139ec9dd01a577040699978), based on upstream commit `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`. The Release includes the source patch, build record and SHA-256 checksums. The [dependency record](win-port/upstream.json) identifies the corresponding V8 and toolchain versions.
 
 ## Attribution and license
 
