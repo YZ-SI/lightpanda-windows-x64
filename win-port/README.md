@@ -10,7 +10,7 @@ This port starts from Lightpanda [1.0.5][release]. The exact source and dependen
 
 ```powershell
 .\win-port\build-v8.ps1 -V8Source $v8 -ZigV8Source $zigV8 -DepotTools $depot -Gn $gnExe -Ninja $ninjaExe -Jobs 12 -Sync
-.\win-port\build.ps1 -V8Archive "$v8/out/lp-win-x64/obj/zig/c_v8.lib" -Version '1.0.5+windows.3'
+.\win-port\build.ps1 -V8Archive "$v8/out/lp-win-x64/obj/zig/c_v8.lib" -Version '1.0.5+windows'
 ```
 
 The browser build writes `zig-out/bin/lightpanda.exe`. It generates a local import-library copy without the conflicting MSVC startup objects. The final executable uses the Windows GNU CRT startup. The installed SDK libraries remain intact. Add `-Snapshot` to generate and embed a snapshot from the same V8 archive. `-RustArchive` can reuse an independently built Windows GNU Rust static library. The GNU Windows link step filters a cached copy of the Rust archive so Zig supplies its own `f128` runtime functions. For direct Zig builds, pass the V8 archive with `-Dprebuilt_v8_path` and the path returned by `prepare-msvc.ps1` with `-Dwindows_import_lib_path`.

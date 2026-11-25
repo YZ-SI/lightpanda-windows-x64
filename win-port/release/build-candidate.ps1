@@ -22,7 +22,7 @@ $receipt = Join-Path $run "build.windows.$Revision.json"
 if (Test-Path -LiteralPath $receipt) { throw "Build $Revision is already recorded. Use a new Revision for a revised candidate." }
 $official = Get-Content -LiteralPath (Join-Path $run 'official-release.json') -Raw | ConvertFrom-Json
 $pins = Get-Content -LiteralPath (Join-Path $source 'win-port/upstream.json') -Raw | ConvertFrom-Json
-$version = "$($official.tag -creplace '^v', '')+windows.$Revision"
+$version = "$($official.tag -creplace '^v', '')+windows"
 $zigExe = (Get-Command $Zig -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $pythonExe = (Get-Command $Python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $logs = Join-Path $run "logs.windows.$Revision"

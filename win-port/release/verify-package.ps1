@@ -20,7 +20,7 @@ $build = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
 $hex = '^[a-f0-9]{64}$'
 $testDir = Join-Path $PSScriptRoot 'tests'
 $version = $build.version
-$packageName = "lightpanda-$($build.upstream.tag)-windows-x64-$Revision"
+$packageName = "lightpanda-$($build.upstream.tag -creplace '^v', '')-windows"
 $output = Join-Path $run "release-candidate.windows.$Revision"
 $acceptance = Join-Path $output 'acceptance.json'
 if (Test-Path -LiteralPath $acceptance) { throw "This candidate has passed local verification. Its files are at $output." }
@@ -149,11 +149,13 @@ try {
     $env:LOCALAPPDATA = $oldAppData
 }
 
-Copy-Item -LiteralPath $zip, $patch, $receiptPath -Destination $output -Force
+Copy-Item -LiteralPath $zip, $patch -Destination $output -Force
+$publicReceipt = Join-Path $output 'build.windows.json'
+Copy-Item -LiteralPath $receiptPath -Destination $publicReceipt -Force
 $checksums = @(
     "$(Get-Sha256 $zip)  $(Split-Path -Leaf $zip)"
     "$($build.sourcePatchSha256)  $(Split-Path -Leaf $patch)"
-    "$(Get-Sha256 $receiptPath)  $(Split-Path -Leaf $receiptPath)"
+    "$(Get-Sha256 $publicReceipt)  $(Split-Path -Leaf $publicReceipt)"
 )
 $checksums | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS.txt') -Encoding ascii
 [ordered]@{

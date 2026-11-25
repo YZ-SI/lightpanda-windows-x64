@@ -6,7 +6,7 @@ Community port of the [Lightpanda headless browser](https://github.com/lightpand
 
 ## Quick start
 
-Download `lightpanda-1.0.5-windows-x64-3.zip` from the [Windows x64 release](https://github.com/YZ-SI/lightpanda-windows-x64/releases/tag/1.0.5-windows.3). Compare its hash with `SHA256SUMS.txt`, extract the whole archive, and run these commands from the extracted folder. Keep the included Visual C++ runtime DLLs next to `lightpanda.exe`.
+Download `lightpanda-1.0.5-windows.zip` from the [Windows x64 release](https://github.com/YZ-SI/lightpanda-windows-x64/releases/tag/1.0.5-windows). Compare its hash with `SHA256SUMS.txt`, extract the whole archive, and run these commands from the extracted folder. Keep the included Visual C++ runtime DLLs next to `lightpanda.exe`.
 
 ```powershell
 .\lightpanda.exe version
@@ -20,19 +20,16 @@ Connect Puppeteer or Playwright over CDP at `http://127.0.0.1:9222`. Run `.\ligh
 
 | Item | Result |
 | --- | --- |
-| Community version | `1.0.5+windows.3` |
+| Community version | `1.0.5+windows` |
 | Official base | [Lightpanda 1.0.5](https://github.com/lightpanda-io/browser/releases/tag/1.0.5) |
 | Tested platform | Windows 10 x64 |
-| Windows upstream test subsets | Web API 218 passed and 7 skipped, URL 24 passed, fetch 4 passed |
-| Linux upstream suite | 2,435 passed, 7 skipped on both the upstream and port source trees |
 | Smoke tests | HTTPS, fetch hard deadline, CDP over TCP and a local socket, MCP stdio and HTTP, duplicate listeners, console shutdown |
-| Linux comparison | HTML and Markdown output matched for inline JavaScript, static and dynamic imports, and the IANA time zone fixture after line-ending normalization |
 
-The ZIP was built from [community commit `4c3c60af6`](https://github.com/YZ-SI/lightpanda-windows-x64/commit/4c3c60af6170834a7139ec9dd01a577040699978), based on upstream commit `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`. The Release includes the source patch, build record and SHA-256 checksums. The [dependency record](win-port/upstream.json) identifies the corresponding V8 and toolchain versions.
+The [release tag](https://github.com/YZ-SI/lightpanda-windows-x64/tree/1.0.5-windows) points to the source used for the ZIP. Its upstream commit is `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`. The Release includes the source patch, build record and SHA-256 checksums. The [dependency record](win-port/upstream.json) identifies the V8 and toolchain versions.
 
 The Windows port uses the host's certificate trust policy and follows Winsock's local socket rules. Clean Windows installation testing is pending.
 
-## Current source validation
+## Upstream test coverage
 
 The upstream suite runs on the current port source on Windows 10 x64 and Linux x64. Both runs cover the same 2,445 named tests with zero failures. Both platforms skip seven WebDriver tests that require optional WPT extensions. Windows skips nine more cases for Linux crash signals, core dumps, and glibc allocator tuning.
 

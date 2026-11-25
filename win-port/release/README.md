@@ -10,7 +10,7 @@ Export the patch from the last accepted source commit, then prepare a worktree f
 $repo = (Resolve-Path .).Path
 $flow = Join-Path $repo 'win-port/release'
 $previousBase = '8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f'
-$previousPort = '4c3c60af6170834a7139ec9dd01a577040699978'
+$previousPort = '1.0.5-windows'
 $patch = Join-Path $env:TEMP 'lightpanda-windows-source.patch'
 $runRoot = 'D:\lp-runs'
 
@@ -47,6 +47,6 @@ The package step reconstructs the source tree from the official commit and verif
 
 ## Release review
 
-Review the version, supported behavior, test coverage and limits, corresponding source and dependencies, and checksums. Record which Windows versions you tested and whether the ZIP was run on a clean installation. After the maintainer approves the candidate, publish the ZIP, source patch, build record and `SHA256SUMS.txt` together. Point the GitHub release tag at the commit used to build the executable. Use that source commit and official base for the next update.
+Review the version, supported behavior, test coverage and limits, corresponding source and dependencies, and checksums. Record which Windows versions you tested and whether the ZIP was run on a clean installation. After the maintainer approves the candidate, publish the ZIP, `windows-source.patch`, `build.windows.json` and `SHA256SUMS.txt` together. Point the GitHub release tag at the commit used to build the executable. Use that source commit and official base for the next update.
 
-Set the same `-Revision` on the build and package commands. For example, revision `3` of upstream `1.0.5` reports `1.0.5+windows.3` in the executable and uses the release tag `1.0.5-windows.3`.
+Upstream `1.0.5` produces `lightpanda-1.0.5-windows.zip`, the GitHub release tag `1.0.5-windows`, and the executable version `1.0.5+windows`. Set the same `-Revision` on the build and package commands to identify a local attempt in the run directory.
