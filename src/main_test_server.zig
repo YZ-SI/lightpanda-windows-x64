@@ -25,7 +25,7 @@ const WS_PORT = 9584;
 pub fn main() !void {
     // A browser can drop a connection we're still writing to (a WebSocket
     // closed while connecting): that's a write error, not a reason to die.
-    std.posix.sigaction(.PIPE, &.{
+    if (@import("builtin").os.tag != .windows) std.posix.sigaction(.PIPE, &.{
         .handler = .{ .handler = std.posix.SIG.IGN },
         .mask = std.posix.sigemptyset(),
         .flags = 0,

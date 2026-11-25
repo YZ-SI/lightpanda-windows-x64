@@ -62,8 +62,11 @@ pub fn main(init: std.process.Init) !void {
     defer std.testing.io_instance.deinit();
 
     const env = Env.init(init.environ_map);
-    if (env.claim == null and env.jobs > 1) {
-        try runShards(std.testing.io_instance.io(), arena.allocator(), init.environ_map, env.jobs);
+    // The upstream shard counter uses a POSIX shared mapping.
+    if (comptime builtin.os.tag != .windows) {
+        if (env.claim == null and env.jobs > 1) {
+            try runShards(std.testing.io_instance.io(), arena.allocator(), init.environ_map, env.jobs);
+        }
     }
 
     var runner = Runner.init(allocator, arena.allocator(), &ta, env);
@@ -122,7 +125,12 @@ const Runner = struct {
         // Then we have a special check to make sure _some_ test was run. This
         const webapi_html_test_mode = self.env.filter == null and self.env.subfilter != null;
 
-        var claim: ?Claim = if (self.env.claim) |path| try .open(io, path) else null;
+        var claim: ?Claim = if (comptime builtin.os.tag == .windows)
+            null
+        else if (self.env.claim) |path|
+            try .open(io, path)
+        else
+            null;
         // counts only the tests below, so the indices claimed have no gaps
         var index: u64 = 0;
         for (builtin.test_functions) |t| {

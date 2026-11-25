@@ -22,6 +22,7 @@
 //! The structure does not clear the memory allocated in the arena,
 //! clear the entire arena when exiting the program.
 const std = @import("std");
+const builtin = @import("builtin");
 const lp = @import("lightpanda");
 
 const log = lp.log;
@@ -49,6 +50,16 @@ const Listener = struct {
 };
 
 pub fn install(self: *SigHandler) !void {
+    if (comptime builtin.os.tag == .windows) {
+        WindowsConsole.mutex.lockUncancelable(lp.io);
+        defer WindowsConsole.mutex.unlock(lp.io);
+        WindowsConsole.handler = self;
+        if (WindowsConsole.SetConsoleCtrlHandler(WindowsConsole.onControl, 1) == 0) {
+            WindowsConsole.handler = null;
+            return error.ConsoleControlHandlerRegistrationFailed;
+        }
+        return;
+    }
     // Block these signals for the current thread and all created from it.
     // SIGALRM is included so arm() can wake the sighandler thread on a deadline.
     self.sigset = std.posix.sigemptyset();
@@ -72,6 +83,10 @@ extern "c" fn setitimer(which: c_int, new_value: *const itimerval, old_value: ?*
 /// Schedule a SIGALRM after `ms` milliseconds, which wakes the sighandler
 /// thread and runs the registered listeners. Used to enforce --terminate-ms.
 pub fn deadline(_: *SigHandler, ms: u32) !void {
+    if (builtin.os.tag == .windows) {
+        // No setitimer/SIGALRM on Windows; a deadline cannot be armed.
+        return error.SetItimerFailed;
+    }
     const it = itimerval{
         .interval = .{ .sec = 0, .usec = 0 },
         .value = .{
@@ -131,21 +146,7 @@ fn sighandle(self: *SigHandler) noreturn {
 
         switch (@as(std.posix.SIG, @fromBackingInt(@intCast(sig)))) {
             .INT, .TERM => {
-                self.mutex.lockUncancelable(lp.io);
-                if (self.attempt > 1 and !self.no_hard_exit) {
-                    self.mutex.unlock(lp.io);
-                    std.process.exit(1);
-                }
-                // While `no_hard_exit` is set, cap the counter so a later
-                // flip back to false (e.g. agent-suspend/resume) doesn't
-                // immediately hard-exit on the next signal.
-                if (self.no_hard_exit) self.attempt = 1 else self.attempt += 1;
-
-                log.info(.app, "Received termination signal...", .{});
-                for (self.listeners.items) |*item| {
-                    item.start(item.args.ptr);
-                }
-                self.mutex.unlock(lp.io);
+                _ = self.notifyTermination();
                 continue;
             },
             .ALRM => {
@@ -164,3 +165,51 @@ fn sighandle(self: *SigHandler) noreturn {
         }
     }
 }
+
+fn notifyTermination(self: *SigHandler) bool {
+    self.mutex.lockUncancelable(lp.io);
+    if (self.attempt > 1 and !self.no_hard_exit) {
+        self.mutex.unlock(lp.io);
+        std.process.exit(1);
+    }
+    defer self.mutex.unlock(lp.io);
+    // Keep repeated REPL interrupts from turning into a hard exit.
+    if (self.no_hard_exit) self.attempt = 1 else self.attempt += 1;
+
+    log.info(.app, "Received termination signal...", .{});
+    for (self.listeners.items) |*item| item.start(item.args.ptr);
+    return self.listeners.items.len != 0;
+}
+
+pub fn uninstall(self: *SigHandler) void {
+    if (comptime builtin.os.tag == .windows) {
+        WindowsConsole.mutex.lockUncancelable(lp.io);
+        if (WindowsConsole.handler != self) {
+            WindowsConsole.mutex.unlock(lp.io);
+            return;
+        }
+        WindowsConsole.handler = null;
+        WindowsConsole.mutex.unlock(lp.io);
+        _ = WindowsConsole.SetConsoleCtrlHandler(WindowsConsole.onControl, 0);
+    }
+}
+
+const WindowsConsole = struct {
+    extern "kernel32" fn SetConsoleCtrlHandler(
+        callback: *const fn (u32) callconv(.winapi) c_int,
+        add: c_int,
+    ) callconv(.winapi) c_int;
+
+    var mutex: std.Io.Mutex = .init;
+    var handler: ?*SigHandler = null;
+
+    fn onControl(event: u32) callconv(.winapi) c_int {
+        const ctrl_c = 0;
+        const ctrl_break = 1;
+        if (event != ctrl_c and event != ctrl_break) return 0;
+        mutex.lockUncancelable(lp.io);
+        defer mutex.unlock(lp.io);
+        const self = handler orelse return 0;
+        return @intFromBool(self.notifyTermination());
+    }
+};

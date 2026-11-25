@@ -113,6 +113,7 @@ fn run(allocator: Allocator, main_arena: Allocator, proc_args: std.process.Args)
     const sighandler = try main_arena.create(SigHandler);
     sighandler.* = .{ .arena = main_arena };
     try sighandler.install();
+    defer sighandler.uninstall();
 
     // _app is global to handle graceful shutdown.
     var app = try App.init(allocator, &args);
@@ -155,6 +156,7 @@ fn run(allocator: Allocator, main_arena: Allocator, proc_args: std.process.Args)
                 return err;
             };
             defer server.deinit();
+            defer sighandler.uninstall();
 
             try sighandler.on(lp.Server.shutdown, .{server});
 
@@ -236,6 +238,7 @@ fn run(allocator: Allocator, main_arena: Allocator, proc_args: std.process.Args)
             // We need Browser to be createdin fetchThread and to get a reference
             // to it here.
             var ft: FetchTerminator = .{};
+            defer sighandler.uninstall();
             try sighandler.on(FetchTerminator.terminate, .{&ft});
             if (opts.terminate_ms) |ms| {
                 try sighandler.deadline(ms);
@@ -262,6 +265,7 @@ fn run(allocator: Allocator, main_arena: Allocator, proc_args: std.process.Args)
                 };
                 const http_server = try lp.mcp.HttpServer.init(allocator, app, app.config.httpSessionTimeout());
                 defer http_server.deinit();
+                defer sighandler.uninstall();
                 // A signal stops the accept loop, run() returns, deinit joins.
                 try sighandler.on(lp.mcp.HttpServer.stop, .{http_server});
                 http_server.run(address) catch |err| {
@@ -281,6 +285,7 @@ fn run(allocator: Allocator, main_arena: Allocator, proc_args: std.process.Args)
                 try sighandler.on(lp.Server.shutdown, .{cdp_server.?});
             }
             defer if (cdp_server) |s| s.deinit();
+            defer sighandler.uninstall();
 
             var mcp_err: ?anyerror = null;
             {
@@ -304,6 +309,7 @@ fn run(allocator: Allocator, main_arena: Allocator, proc_args: std.process.Args)
             sighandler.no_hard_exit = true;
 
             var sig_bridge: lp.Agent.SigBridge = .{};
+            defer sighandler.uninstall();
             try sighandler.on(lp.Agent.SigBridge.onSignal, .{&sig_bridge});
 
             var failed: bool = false;

@@ -21,6 +21,7 @@
 //! credential out of a model's context, and what a malformed call is told.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const lp = @import("../../lightpanda.zig");
 
 const NodeRegistry = @import("../../NodeRegistry.zig");
@@ -237,18 +238,33 @@ pub fn normalizeArgs(arena: std.mem.Allocator, tool: Tool, args: ?std.json.Value
     return .{ .object = new_obj };
 }
 
-/// Walks `std.c.environ` (live) and dupes names into `arena` — `setenv`
-/// can free both the environ array and its entry strings, so a captured
-/// `std.os.environ` slice or name pointers into entries would dangle.
+/// Lists LP_ names from the current process environment.
 pub fn lpEnvNames(arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
     var env_names: std.ArrayList([]const u8) = .empty;
-    var ptr = std.c.environ;
-    while (ptr[0]) |entry| : (ptr += 1) {
-        const line = std.mem.span(entry);
-        const eq_idx = std.mem.findScalar(u8, line, '=') orelse continue;
-        const name = line[0..eq_idx];
-        if (!std.mem.startsWith(u8, name, "LP_")) continue;
-        try env_names.append(arena, try arena.dupe(u8, name));
+    if (comptime builtin.os.tag == .windows) {
+        // The Windows environment is UTF-16 and has no POSIX environ symbol.
+        var env = lp.environMap(std.heap.page_allocator) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Unexpected => unreachable, // WASI only
+        };
+        defer env.deinit();
+        var it = env.iterator();
+        while (it.next()) |entry| {
+            const name = entry.key_ptr.*;
+            if (std.mem.startsWith(u8, name, "LP_")) {
+                try env_names.append(arena, try arena.dupe(u8, name));
+            }
+        }
+    } else {
+        // Read environ live. A captured pointer can dangle after setenv/unsetenv.
+        var ptr = std.c.environ;
+        while (ptr[0]) |entry| : (ptr += 1) {
+            const line = std.mem.span(entry);
+            const eq_idx = std.mem.findScalar(u8, line, '=') orelse continue;
+            const name = line[0..eq_idx];
+            if (!std.mem.startsWith(u8, name, "LP_")) continue;
+            try env_names.append(arena, try arena.dupe(u8, name));
+        }
     }
     std.mem.sort([]const u8, env_names.items, {}, struct {
         fn lt(_: void, a: []const u8, b: []const u8) bool {

@@ -17,10 +17,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const lp = @import("lightpanda");
 
 const sys_net = @import("sys/net.zig");
 const posix = std.posix;
+
+extern "ws2_32" fn WSAStartup(version: u16, info: *anyopaque) c_int;
+extern "ws2_32" fn WSACleanup() c_int;
 
 const TestWSServer = @This();
 
@@ -39,9 +43,9 @@ pub fn init(port: u16) TestWSServer {
 pub fn stop(self: *TestWSServer) void {
     self.shutdown.store(true, .release);
     if (self.listener) |socket| {
-        switch (@import("builtin").target.os.tag) {
+        switch (builtin.os.tag) {
             .linux => sys_net.shutdown(socket, .recv) catch {},
-            else => _ = std.c.close(socket),
+            else => sys_net.close(socket),
         }
     }
 }
@@ -53,12 +57,20 @@ pub fn run(self: *TestWSServer, wg: *lp.WaitGroup) void {
 }
 
 fn runImpl(self: *TestWSServer, wg: *lp.WaitGroup) !void {
+    if (comptime builtin.os.tag == .windows) {
+        // Space for the Winsock WSADATA returned by WSAStartup.
+        var info: [512]u8 align(8) = undefined;
+        if (WSAStartup(0x0202, &info) != 0) return error.WinsockInitializationFailed;
+    }
+    defer if (comptime builtin.os.tag == .windows) {
+        _ = WSACleanup();
+    };
     const socket = try sys_net.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
-    errdefer _ = std.c.close(socket);
+    errdefer sys_net.close(socket);
 
     const addr: sys_net.IpAddress = .{ .ip4 = .loopback(self.port) };
 
-    try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
+    try sys_net.setSocketOption(socket, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
     const sa = sys_net.sockaddrFromAddress(&addr);
     try sys_net.bind(socket, sa.ptr(), sa.len);
     try sys_net.listen(socket, 8);
@@ -81,7 +93,7 @@ fn runImpl(self: *TestWSServer, wg: *lp.WaitGroup) !void {
 
         const thread = std.Thread.spawn(.{}, handleClient, .{client}) catch |err| {
             std.debug.print("[WS Server] Thread spawn error: {}\n", .{err});
-            _ = std.c.close(client);
+            sys_net.close(client);
             continue;
         };
         thread.detach();
@@ -89,14 +101,14 @@ fn runImpl(self: *TestWSServer, wg: *lp.WaitGroup) !void {
 }
 
 fn handleClient(client: posix.socket_t) void {
-    defer _ = std.c.close(client);
+    defer sys_net.close(client);
 
     if (@hasDecl(posix.TCP, "NODELAY")) {
-        posix.setsockopt(client, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1))) catch {};
+        sys_net.setSocketOption(client, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1))) catch {};
     }
 
     var buf: [4096]u8 = undefined;
-    const n = posix.read(client, &buf) catch return;
+    const n = sys_net.readSocket(client, &buf) catch return;
 
     const request = buf[0..n];
 
@@ -237,7 +249,7 @@ const RecvBuffer = struct {
                 self.end = avail;
             }
 
-            const n = posix.read(client, self.buf[self.end..]) catch return false;
+            const n = sys_net.readSocket(client, self.buf[self.end..]) catch return false;
             if (n == 0) return false;
             self.end += n;
         }

@@ -180,6 +180,15 @@ fn getAndMakeAppDir(allocator: Allocator) ?[]const u8 {
 
 pub fn getAppDataDir(allocator: Allocator, appname: []const u8) ![]const u8 {
     switch (@import("builtin").os.tag) {
+        .windows => {
+            const dir = lp.environ().getAlloc(allocator, "LOCALAPPDATA") catch |err| switch (err) {
+                error.EnvironmentVariableMissing => return error.AppDataDirUnavailable,
+                else => return err,
+            };
+            defer allocator.free(dir);
+            if (dir.len == 0) return error.AppDataDirUnavailable;
+            return std.fs.path.join(allocator, &.{ dir, appname });
+        },
         .macos, .ios => {
             const home = std.c.getenv("HOME") orelse return error.AppDataDirUnavailable;
             return std.fs.path.join(allocator, &.{ std.mem.span(home), "Library", "Application Support", appname });

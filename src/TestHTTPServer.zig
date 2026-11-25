@@ -50,7 +50,12 @@ pub fn stop(self: *TestHTTPServer) void {
     if (self.listener) |*listener| {
         switch (@import("builtin").target.os.tag) {
             .linux => sys_net.shutdown(listener.socket.handle, .recv) catch {},
-            else => _ = std.c.close(listener.socket.handle),
+            .windows => {
+                // Wake the accepting thread so it can close its socket itself.
+                const wake = listener.socket.address.connect(lp.io, .{ .mode = .stream }) catch return;
+                wake.close(lp.io);
+            },
+            else => listener.socket.close(lp.io),
         }
     }
 }
@@ -60,6 +65,7 @@ pub fn run(self: *TestHTTPServer, wg: *lp.WaitGroup) !void {
 
     self.listener = try address.listen(lp.io, .{ .reuse_address = true });
     var listener = &self.listener.?;
+    defer if (@import("builtin").os.tag == .windows) listener.socket.close(lp.io);
     self.shutdown.store(false, .release);
 
     wg.finish();
@@ -71,6 +77,10 @@ pub fn run(self: *TestHTTPServer, wg: *lp.WaitGroup) !void {
             }
             return err;
         };
+        if (@import("builtin").os.tag == .windows and self.shutdown.load(.acquire)) {
+            conn.close(lp.io);
+            return;
+        }
         const thrd = try std.Thread.spawn(.{}, handleConnection, .{ self, conn });
         thrd.detach();
     }
@@ -80,7 +90,7 @@ fn handleConnection(self: *TestHTTPServer, conn: std.Io.net.Stream) !void {
     defer conn.close(lp.io);
 
     if (@hasDecl(posix.TCP, "NODELAY")) {
-        posix.setsockopt(conn.socket.handle, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1))) catch {};
+        sys_net.setSocketOption(conn.socket.handle, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1))) catch {};
     }
 
     var req_buf: [2048]u8 = undefined;

@@ -26,7 +26,8 @@ pub fn main(init: std.process.Init) !void {
     // the same value.
     var v8_flags: ?[]const u8 = null;
     var out_path: ?[]const u8 = null;
-    var args = std.process.Args.Iterator.init(init.minimal.args);
+    var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, init.gpa);
+    defer args.deinit();
     _ = args.next(); // executable name
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--v8-flags-unsafe")) {
