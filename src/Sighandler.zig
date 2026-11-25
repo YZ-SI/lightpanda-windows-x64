@@ -35,6 +35,7 @@ arena: Allocator,
 
 sigset: std.posix.sigset_t = undefined,
 handle_thread: ?std.Thread = null,
+windows_timer: if (builtin.os.tag == .windows) ?*WindowsDeadline.Timer else void = if (builtin.os.tag == .windows) null else {},
 
 attempt: u32 = 0,
 mutex: std.Io.Mutex = .init,
@@ -80,12 +81,10 @@ const itimerval = extern struct {
 const ITIMER_REAL: c_int = 0;
 extern "c" fn setitimer(which: c_int, new_value: *const itimerval, old_value: ?*itimerval) c_int;
 
-/// Schedule a SIGALRM after `ms` milliseconds, which wakes the sighandler
-/// thread and runs the registered listeners. Used to enforce --terminate-ms.
-pub fn deadline(_: *SigHandler, ms: u32) !void {
-    if (builtin.os.tag == .windows) {
-        // No setitimer/SIGALRM on Windows; a deadline cannot be armed.
-        return error.SetItimerFailed;
+/// Run the registered deadline listeners after `ms` milliseconds.
+pub fn deadline(self: *SigHandler, ms: u32) !void {
+    if (comptime builtin.os.tag == .windows) {
+        return WindowsDeadline.arm(self, ms);
     }
     const it = itimerval{
         .interval = .{ .sec = 0, .usec = 0 },
@@ -149,21 +148,18 @@ fn sighandle(self: *SigHandler) noreturn {
                 _ = self.notifyTermination();
                 continue;
             },
-            .ALRM => {
-                // Deadline tripped (e.g. --terminate-ms). Run the same listeners,
-                // but don't bump `attempt` — a subsequent ctrl-c should still get
-                // the normal first-attempt graceful path before hard-exiting.
-                self.mutex.lockUncancelable(lp.io);
-                defer self.mutex.unlock(lp.io);
-                log.info(.app, "Deadline reached ", .{});
-                for (self.listeners.items) |*item| {
-                    item.start(item.args.ptr);
-                }
-                continue;
-            },
+            .ALRM => self.notifyDeadline(),
             else => continue,
         }
     }
+}
+
+fn notifyDeadline(self: *SigHandler) void {
+    // A timeout does not count as a console interrupt.
+    self.mutex.lockUncancelable(lp.io);
+    defer self.mutex.unlock(lp.io);
+    log.info(.app, "Deadline reached ", .{});
+    for (self.listeners.items) |*item| item.start(item.args.ptr);
 }
 
 fn notifyTermination(self: *SigHandler) bool {
@@ -183,6 +179,7 @@ fn notifyTermination(self: *SigHandler) bool {
 
 pub fn uninstall(self: *SigHandler) void {
     if (comptime builtin.os.tag == .windows) {
+        WindowsDeadline.cancel(self);
         WindowsConsole.mutex.lockUncancelable(lp.io);
         if (WindowsConsole.handler != self) {
             WindowsConsole.mutex.unlock(lp.io);
@@ -193,6 +190,56 @@ pub fn uninstall(self: *SigHandler) void {
         _ = WindowsConsole.SetConsoleCtrlHandler(WindowsConsole.onControl, 0);
     }
 }
+
+const WindowsDeadline = struct {
+    const Timer = opaque {};
+    const CallbackInstance = opaque {};
+    const FileTime = std.os.windows.FILETIME;
+
+    extern "kernel32" fn CreateThreadpoolTimer(
+        callback: *const fn (*CallbackInstance, *anyopaque, *Timer) callconv(.winapi) void,
+        context: *anyopaque,
+        environment: ?*anyopaque,
+    ) callconv(.winapi) ?*Timer;
+    extern "kernel32" fn SetThreadpoolTimer(
+        timer: *Timer,
+        due_time: ?*const FileTime,
+        period_ms: u32,
+        window_ms: u32,
+    ) callconv(.winapi) void;
+    extern "kernel32" fn WaitForThreadpoolTimerCallbacks(timer: *Timer, cancel_pending: c_int) callconv(.winapi) void;
+    extern "kernel32" fn CloseThreadpoolTimer(timer: *Timer) callconv(.winapi) void;
+
+    fn arm(handler: *SigHandler, ms: u32) !void {
+        cancel(handler);
+        if (ms == 0) return;
+
+        const timer = CreateThreadpoolTimer(onTimer, handler, null) orelse return error.WindowsDeadlineTimerCreationFailed;
+        handler.windows_timer = timer;
+
+        // A negative FILETIME specifies a relative interval in 100 ns ticks.
+        const ticks: u64 = @bitCast(-@as(i64, ms) * (std.time.ns_per_ms / 100));
+        const due_time: FileTime = .{
+            .dwLowDateTime = @truncate(ticks),
+            .dwHighDateTime = @truncate(ticks >> 32),
+        };
+        SetThreadpoolTimer(timer, &due_time, 0, 0);
+    }
+
+    fn cancel(handler: *SigHandler) void {
+        const timer = handler.windows_timer orelse return;
+        handler.windows_timer = null;
+        SetThreadpoolTimer(timer, null, 0, 0);
+        // Drain any running callback before the fetch listener's context is freed.
+        WaitForThreadpoolTimerCallbacks(timer, 1);
+        CloseThreadpoolTimer(timer);
+    }
+
+    fn onTimer(_: *CallbackInstance, context: *anyopaque, _: *Timer) callconv(.winapi) void {
+        const handler: *SigHandler = @ptrCast(@alignCast(context));
+        handler.notifyDeadline();
+    }
+};
 
 const WindowsConsole = struct {
     extern "kernel32" fn SetConsoleCtrlHandler(

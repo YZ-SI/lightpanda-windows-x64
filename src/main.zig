@@ -17,6 +17,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const lp = @import("lightpanda");
 const Allocator = std.mem.Allocator;
 
@@ -373,11 +374,15 @@ fn agentThread(
 const FetchTerminator = struct {
     mutex: std.Io.Mutex = .init,
     browser: ?*lp.Browser = null,
+    windows_stop_requested: if (builtin.os.tag == .windows) bool else void = if (builtin.os.tag == .windows) false else {},
 
-    fn storeBrowser(self: *FetchTerminator, browser: *lp.Browser) void {
+    fn storeBrowser(self: *FetchTerminator, browser: *lp.Browser) bool {
         self.mutex.lockUncancelable(lp.io);
         defer self.mutex.unlock(lp.io);
+        // The Windows timer can expire before the browser worker is ready.
+        if (builtin.os.tag == .windows and self.windows_stop_requested) return false;
         self.browser = browser;
+        return true;
     }
 
     fn releaseBrowser(self: *FetchTerminator) void {
@@ -391,6 +396,7 @@ const FetchTerminator = struct {
     fn terminate(self: *FetchTerminator) void {
         self.mutex.lockUncancelable(lp.io);
         defer self.mutex.unlock(lp.io);
+        if (comptime builtin.os.tag == .windows) self.windows_stop_requested = true;
         const b = self.browser orelse return;
         b.env.requestTerminate();
         self.browser = null;
@@ -406,7 +412,7 @@ fn fetchThread(app: *App, ft: *FetchTerminator, urls: []const [:0]const u8, fetc
     };
     defer browser.deinit();
 
-    ft.storeBrowser(&browser);
+    if (!ft.storeBrowser(&browser)) return;
     // if this exits normally, we want to disarm the FetchTerminator so that
     // any subsequent sighandlers don't try to shutdown an already (or in-the-
     // process-of) shutting down browser/env
