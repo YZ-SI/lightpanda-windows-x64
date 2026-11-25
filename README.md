@@ -20,16 +20,17 @@ Connect Puppeteer or Playwright over CDP at `http://127.0.0.1:9222`. Run `.\ligh
 
 | Item | Result |
 | --- | --- |
-| Community version | `1.0.5+windows.1` |
+| Community version | `1.0.5+windows.2` |
 | Official base | [Lightpanda 1.0.5](https://github.com/lightpanda-io/browser/releases/tag/1.0.5) |
 | Tested platform | Windows 10 x64 |
-| Upstream tests | 24 URL tests passed |
-| Smoke tests | HTML and Markdown dumps, HTTPS, Puppeteer and Playwright CDP, MCP stdio and HTTP, console shutdown |
+| Windows upstream subsets | 24 URL tests and 4 fetch tests |
+| Linux upstream suite | 2,435 passed, 7 skipped on both the upstream and port source trees |
+| Smoke tests | HTML and Markdown dumps, HTTPS, fetch hard deadline, Puppeteer and Playwright CDP, MCP stdio and HTTP, console shutdown |
 | Linux comparison | HTML and Markdown output matched on a JavaScript fixture after line-ending normalization |
 
-The full upstream test suite and a clean Windows host still need validation. Upstream 1.0.5 implements the `fetch --terminate-ms` hard deadline with POSIX timers and signals. The native Windows port has yet to implement a Windows equivalent. [Upstream deadline implementation](https://github.com/lightpanda-io/browser/blob/1.0.5/src/Sighandler.zig)
+The `fetch --terminate-ms` hard deadline uses a native Windows timer and the existing V8 termination path. The full suite still has POSIX-only test fixtures. Windows Web API testing has a known module compatibility issue, and clean Windows host validation is pending.
 
-The [tested source commit](https://github.com/YZ-SI/lightpanda-windows-x64/commit/6da58fa89013f3ce15e86f4c9f85fde85f4cf8d7) is based directly on upstream commit `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`. The [dependency record](win-port/upstream.json) identifies the corresponding V8 and toolchain versions.
+The [tested source commit](https://github.com/YZ-SI/lightpanda-windows-x64/commit/cdddc1937a7f024c18891368d3425cea4354f86c) is based on upstream commit `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`. The [dependency record](win-port/upstream.json) identifies the corresponding V8 and toolchain versions.
 
 ## Attribution and license
 

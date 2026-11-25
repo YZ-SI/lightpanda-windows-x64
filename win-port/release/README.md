@@ -10,7 +10,7 @@ Export the patch from the last accepted source commit, then prepare a worktree f
 $repo = (Resolve-Path .).Path
 $flow = Join-Path $repo 'win-port/release'
 $previousBase = '8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f'
-$previousPort = '6da58fa89013f3ce15e86f4c9f85fde85f4cf8d7'
+$previousPort = 'cdddc1937a7f024c18891368d3425cea4354f86c'
 $patch = Join-Path $env:TEMP 'lightpanda-windows-source.patch'
 $runRoot = 'D:\lp-runs'
 
@@ -43,7 +43,7 @@ Install Python and Node on Windows. Prepare the official [Lightpanda demo](https
     -DemoDirectory $demo -Dumpbin $dumpbinExe -MsvcRedist $msvcX64Runtime
 ```
 
-The package step reconstructs the source tree from the official commit and verifies it against the build record. It checks the PE machine type and Microsoft runtime signatures, then runs smoke tests against the extracted ZIP. The candidate folder contains the ZIP, source patch, build record, SHA-256 sums and local acceptance result.
+The package step reconstructs the source tree from the official commit and verifies it against the build record. It checks the PE machine type and Microsoft runtime signatures, then runs smoke tests against the extracted ZIP, including the Windows fetch deadline. The candidate folder contains the ZIP, source patch, build record, SHA-256 sums and local acceptance result.
 
 ## Release review
 

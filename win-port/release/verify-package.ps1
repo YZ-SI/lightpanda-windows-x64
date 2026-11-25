@@ -138,6 +138,7 @@ try {
     Invoke-Checked node @((Join-Path $testDir 'cdp.mjs'), $exe, $version, $DemoDirectory) |
         Tee-Object -FilePath $log -Append
     Invoke-Checked python @((Join-Path $testDir 'mcp.py'), $exe) | Tee-Object -FilePath $log -Append
+    Invoke-Checked python @((Join-Path $testDir 'fetch-deadline.py'), $exe) | Tee-Object -FilePath $log -Append
     Invoke-Checked python @((Join-Path $testDir 'shutdown.py'), $exe) | Tee-Object -FilePath $log -Append
     $https = Invoke-Checked $exe @('fetch', '--dump', 'html', $HttpsFixture)
     if (-not ($https -match '<html')) { throw 'HTTPS fixture emitted no HTML.' }

@@ -16,9 +16,9 @@ Puppeteer 和 Playwright 可通过 CDP 连接 `http://127.0.0.1:9222`。MCP stdi
 
 ## 验证与维护
 
-`1.0.5+windows.1` 基于官方 [1.0.5](https://github.com/lightpanda-io/browser/releases/tag/1.0.5) 的提交 `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`。Windows 10 x64 上通过了 24 项上游 URL 测试，以及抓取、CDP、MCP 和正常退出测试。对同一个 JavaScript 夹具，HTML 和 Markdown 输出在统一换行符后与官方 Linux 版一致。
+`1.0.5+windows.2` 基于官方 [1.0.5](https://github.com/lightpanda-io/browser/releases/tag/1.0.5) 的提交 `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`。Windows 10 x64 上通过了 24 项上游 URL 测试、4 项上游抓取测试，以及强制超时、CDP、MCP 和正常退出测试。对同一个 JavaScript 夹具，HTML 和 Markdown 输出在统一换行符后与官方 Linux 版一致。
 
-Windows 全量测试与干净环境复测待完成。官方 1.0.5 使用 POSIX 定时器和信号实现 `fetch --terminate-ms` 的强制超时，原生 Windows 移植版暂未实现对应的机制。 [官方实现](https://github.com/lightpanda-io/browser/blob/1.0.5/src/Sighandler.zig)
+`fetch --terminate-ms` 使用原生 Windows 定时器触发 V8 中断。Windows 全量测试仍有 POSIX 测试夹具待适配，Web API 测试也有已知的模块兼容性问题。干净环境复测待完成。
 
 查看[依赖锁定记录](upstream.json)和[上游同步、构建与验收流程](release/README.md)。
 
