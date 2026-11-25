@@ -32,7 +32,7 @@ $run = Join-Path $runRoot $tag
     -Zig $zigExe -EnableBuildSymlinks
 ```
 
-Set `$tag` to the prepared official tag. Add `-SyncV8` when synchronizing a fresh V8 checkout. The build uses Cargo's locked dependency resolution, runs the upstream URL tests, then builds the native Windows executable. The output includes a source patch and dependency hashes.
+Set `$tag` to the prepared official tag. Add `-SyncV8` when synchronizing a fresh V8 checkout. The build uses Cargo's locked dependency resolution and runs the full upstream suite on native Windows before building the release executable. The test log is `upstream-windows-tests.log` in the revision's log directory. The output includes the source patch and dependency hashes.
 
 ## Verify the ZIP
 

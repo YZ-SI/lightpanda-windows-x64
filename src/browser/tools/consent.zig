@@ -302,33 +302,39 @@ test "acceptCookies: a recorded control that is gone clicks nothing and asks not
     try std.testing.expectEqual(null, result.replay_args);
 }
 
-test "acceptCookies: the control the decision model picks is clicked and the re-read verifies it" {
-    for (std.enums.values(testing.MockDecisions.Provider)) |provider| {
-        var registry: NodeRegistry = .init(std.testing.allocator);
-        defer registry.deinit();
-
-        var page = try testing.pageTest("consent_banner.html", .{});
-        defer page.close();
-
-        const aa = testing.arena_allocator;
-        const mock = try testing.MockDecisions.startAs(aa, provider);
-        defer mock.stop();
-
-        const result = try call(aa, page.session, &registry, "acceptCookies", null, .{ .source = .user });
-        try std.testing.expect(!result.is_error);
-        try std.testing.expect(std.mem.find(u8, result.text, "\"dismissed\":true") != null);
-        try std.testing.expect(std.mem.find(u8, result.text, "\"verified\":true") != null);
-        try std.testing.expect(std.mem.find(u8, result.text, "Accept all cookies") != null);
-        // What `--save` writes into the script, so the next run clicks it directly.
-        try std.testing.expectEqualStrings("{\"selectors\":[\"#accept\"]}", result.replay_args.?);
-
-        const tree = try call(aa, page.session, &registry, "tree", null, .{ .source = .user });
-        try std.testing.expect(std.mem.find(u8, tree.text, "Accept all cookies") == null);
-        try std.testing.expect(std.mem.find(u8, tree.text, "Headline") != null);
-    }
+test "fresh environment: acceptCookies: the control the decision model picks is clicked and the re-read verifies it (typesafe)" {
+    try testDecisionConsent(.typesafe);
 }
 
-test "acceptCookies: a click that moves the page is followed by a pick on the page it went to" {
+test "fresh environment: acceptCookies: the control the decision model picks is clicked and the re-read verifies it (gemini)" {
+    try testDecisionConsent(.gemini);
+}
+
+fn testDecisionConsent(provider: testing.MockDecisions.Provider) !void {
+    var registry: NodeRegistry = .init(std.testing.allocator);
+    defer registry.deinit();
+
+    var page = try testing.pageTest("consent_banner.html", .{});
+    defer page.close();
+
+    const aa = testing.arena_allocator;
+    const mock = try testing.MockDecisions.startAs(aa, provider);
+    defer mock.stop();
+
+    const result = try call(aa, page.session, &registry, "acceptCookies", null, .{ .source = .user });
+    try std.testing.expect(!result.is_error);
+    try std.testing.expect(std.mem.find(u8, result.text, "\"dismissed\":true") != null);
+    try std.testing.expect(std.mem.find(u8, result.text, "\"verified\":true") != null);
+    try std.testing.expect(std.mem.find(u8, result.text, "Accept all cookies") != null);
+    // What `--save` writes into the script, so the next run clicks it directly.
+    try std.testing.expectEqualStrings("{\"selectors\":[\"#accept\"]}", result.replay_args.?);
+
+    const tree = try call(aa, page.session, &registry, "tree", null, .{ .source = .user });
+    try std.testing.expect(std.mem.find(u8, tree.text, "Accept all cookies") == null);
+    try std.testing.expect(std.mem.find(u8, tree.text, "Headline") != null);
+}
+
+test "fresh environment: acceptCookies: a click that moves the page is followed by a pick on the page it went to" {
     var registry: NodeRegistry = .init(std.testing.allocator);
     defer registry.deinit();
 
@@ -348,7 +354,7 @@ test "acceptCookies: a click that moves the page is followed by a pick on the pa
     try std.testing.expect(std.mem.find(u8, tree.text, "Accept all cookies") == null);
 }
 
-test "acceptCookies: a confirmation the first click raises is picked from afresh" {
+test "fresh environment: acceptCookies: a confirmation the first click raises is picked from afresh" {
     var registry: NodeRegistry = .init(std.testing.allocator);
     defer registry.deinit();
 
@@ -371,7 +377,7 @@ test "acceptCookies: a confirmation the first click raises is picked from afresh
     try std.testing.expect(std.mem.find(u8, tree.text, "Headline") != null);
 }
 
-test "acceptCookies: a missing key is reported so the REPL can ask a model instead" {
+test "fresh environment: acceptCookies: a missing key is reported so the REPL can ask a model instead" {
     var registry: NodeRegistry = .init(std.testing.allocator);
     defer registry.deinit();
 

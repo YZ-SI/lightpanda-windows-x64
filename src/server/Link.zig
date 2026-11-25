@@ -156,19 +156,12 @@ pub fn send(self: *Link, data: []const u8) !void {
             // file description, so a flip would reach the loop's reads too.
             // Should virtually never happen.
             error.WouldBlock => {
-                if (builtin.os.tag == .windows) {
-                    // Windows sockets here are blocking, so WouldBlock
-                    // does not occur; posix.poll() has no Windows
-                    // equivalent anyway.
-                    return error.WouldBlock;
-                }
                 // The socket is nonblocking so that the main read loop doesn't
                 // block. But we don't want to make writes truly async, because
                 // then we'd need to allocate the message and hook that back into
                 // the main thread, so...we'll just pull until the we can write
                 // or we hit our send timeout
-                var fds = [_]posix.pollfd{.{ .fd = socket, .events = posix.POLL.OUT, .revents = 0 }};
-                if ((try posix.poll(&fds, self.send_timeout_ms)) == 0) {
+                if (!try sys_net.waitWritable(socket, self.send_timeout_ms)) {
                     return error.Timeout;
                 }
                 continue;
@@ -254,15 +247,10 @@ pub fn readAvailable(self: *Link, budget: usize) !Read {
             return error.TooLarge;
         }
         const want = dst[0..@min(dst.len, remaining)];
-        const n = if (comptime builtin.os.tag == .windows)
-            // A blocking Windows socket never yields
-            // WouldBlock.
-            try sys_net.readSocket(self.socket, want)
-        else
-            posix.read(self.socket, want) catch |err| switch (err) {
-                error.WouldBlock => break,
-                else => return err,
-            };
+        const n = sys_net.readSocket(self.socket, want) catch |err| switch (err) {
+            error.WouldBlock => break,
+            else => return err,
+        };
         if (n == 0) {
             return error.Closed;
         }
@@ -367,20 +355,17 @@ pub fn shutdown(self: *Link) void {
 const testing = @import("../testing.zig");
 
 test "link: send gives up when the peer stops reading" {
-    var pair: [2]posix.socket_t = undefined;
-    if (std.c.socketpair(posix.AF.LOCAL, posix.SOCK.STREAM, 0, &pair) != 0) {
-        return error.SocketPairFailed;
-    }
+    const pair = try sys_net.socketPair();
     // pair[1] is the link's, closed by its deinit
     defer sys_net.close(pair[0]);
 
-    const small = std.mem.toBytes(@as(c_int, 4096));
-    try posix.setsockopt(pair[0], posix.SOL.SOCKET, posix.SO.RCVBUF, &small);
-    try posix.setsockopt(pair[1], posix.SOL.SOCKET, posix.SO.SNDBUF, &small);
-
-    const nonblocking = @as(u32, @bitCast(posix.O{ .NONBLOCK = true }));
-    const flags = try sys_net.fcntl(pair[1], posix.F.GETFL, 0);
-    _ = try sys_net.fcntl(pair[1], posix.F.SETFL, flags | nonblocking);
+    {
+        errdefer sys_net.close(pair[1]);
+        const small = std.mem.toBytes(@as(c_int, 4096));
+        try sys_net.setSocketOption(pair[0], posix.SOL.SOCKET, posix.SO.RCVBUF, &small);
+        try sys_net.setSocketOption(pair[1], posix.SOL.SOCKET, posix.SO.SNDBUF, &small);
+        try testing.setNonblocking(pair[1]);
+    }
 
     var inbox: Inbox = .{};
     defer inbox.deinit();
@@ -396,6 +381,17 @@ test "link: send gives up when the peer stops reading" {
     defer testing.allocator.free(payload);
     @memset(payload, 'a');
 
+    if (comptime builtin.os.tag == .windows) {
+        // Winsock can enqueue the first large write as a single operation.
+        // Fill the TCP queue using several writes before measuring the wait.
+        for (0..32) |_| {
+            _ = sys_net.write(pair[1], payload) catch |err| switch (err) {
+                error.WouldBlock => break,
+                else => return err,
+            };
+        } else return error.TestSocketNeverBlocked;
+    }
+
     // Nobody drains pair[0]. send() waits for writability to finish the
     // write; unbounded, that parks the worker forever and, because shutdown
     // only half-closes the read side, hangs the whole process on SIGINT.
@@ -403,8 +399,13 @@ test "link: send gives up when the peer stops reading" {
 
     // and the run loop's reads share the fd: it must still be non-blocking.
     // Bit test, not equality: macOS adds an internal bit to F_GETFL after a write.
-    const after = try sys_net.fcntl(pair[1], posix.F.GETFL, 0);
-    try testing.expect(after & nonblocking != 0);
+    if (comptime builtin.os.tag == .windows) {
+        var byte: [1]u8 = undefined;
+        try testing.expectError(error.WouldBlock, sys_net.readSocket(pair[1], &byte));
+    } else {
+        const after = try sys_net.fcntl(pair[1], posix.F.GETFL, 0);
+        try testing.expect(after & @as(u32, @bitCast(posix.O{ .NONBLOCK = true })) != 0);
+    }
 }
 
 test "link: nested serialization preserves complete frames and recovers from errors" {
@@ -446,16 +447,14 @@ test "link: nested serialization preserves complete frames and recovers from err
 }
 
 test "link: stops reading once the worker's inbox backs up" {
-    var pair: [2]posix.socket_t = undefined;
-    if (std.c.socketpair(posix.AF.LOCAL, posix.SOCK.STREAM, 0, &pair) != 0) {
-        return error.SocketPairFailed;
-    }
+    const pair = try sys_net.socketPair();
     // pair[1] is the link's, closed by its deinit
     defer sys_net.close(pair[0]);
 
-    const nonblocking = @as(u32, @bitCast(posix.O{ .NONBLOCK = true }));
-    const flags = try sys_net.fcntl(pair[1], posix.F.GETFL, 0);
-    _ = try sys_net.fcntl(pair[1], posix.F.SETFL, flags | nonblocking);
+    testing.setNonblocking(pair[1]) catch |err| {
+        sys_net.close(pair[1]);
+        return err;
+    };
 
     var inbox: Inbox = .{};
     defer inbox.deinit();

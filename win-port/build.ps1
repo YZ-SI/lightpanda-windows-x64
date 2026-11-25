@@ -5,6 +5,7 @@ param(
 
     [string] $Zig = 'zig',
     [string] $Version,
+    [switch] $Test,
     [string] $TestFilter,
     [string] $RustArchive,
     [switch] $Snapshot
@@ -15,10 +16,11 @@ $zigExe = (Get-Command $Zig -CommandType Application -ErrorAction Stop).Source
 $v8Path = (Resolve-Path -LiteralPath $V8Archive).Path
 $rustPath = if ($RustArchive) { (Resolve-Path -LiteralPath $RustArchive).Path }
 $root = Split-Path -Parent $PSScriptRoot
+$runTests = $Test -or $TestFilter
 $common = @(
     '-Dtarget=x86_64-windows-gnu'
     '-Dcpu=x86_64'
-    $(if ($TestFilter) { "-Doptimize=debug" } else { "-Doptimize=fast" })
+    $(if ($runTests) { '-Doptimize=debug' } else { '-Doptimize=fast' })
     "-Dprebuilt_v8_path=$v8Path"
 )
 if ($Version) {
@@ -37,8 +39,10 @@ $common += "-Dwindows_import_lib_path=$importLibs"
 
 Push-Location -LiteralPath $root
 try {
-    if ($TestFilter) {
-        & $zigExe build test @common "-Dtest-compile-filter=$TestFilter" --summary all
+    if ($runTests) {
+        $testArgs = @('test') + $common
+        if ($TestFilter) { $testArgs += "-Dtest-compile-filter=$TestFilter" }
+        & $zigExe build @testArgs --summary failures
         if ($LASTEXITCODE -ne 0) { throw "Windows tests failed (Zig exit $LASTEXITCODE)." }
     } else {
         if ($Snapshot) {

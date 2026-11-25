@@ -167,6 +167,7 @@ app: *App,
 listener: if (builtin.os.tag == .windows) void else std.atomic.Value(posix.socket_t) =
     if (builtin.os.tag == .windows) {} else .init(-1),
 shutting_down: std.atomic.Value(bool) = .init(false),
+test_bound_port: if (builtin.is_test) std.atomic.Value(u16) else void = if (builtin.is_test) .init(0) else {},
 windows_connections: if (builtin.os.tag == .windows) struct {
     io: std.Io.Threaded,
     group: std.Io.Group = .init,
@@ -434,7 +435,7 @@ pub fn run(self: *HttpServer, address: sys_net.IpAddress) !void {
         posix.SOCK.STREAM
     else
         posix.SOCK.STREAM | posix.SOCK.CLOEXEC;
-    const listener = blk: {
+    const listener, const bound = blk: {
         const listener = try sys_net.socket(sys_net.family(&address), sock_flags, posix.IPPROTO.TCP);
         errdefer sys_net.close(listener);
 
@@ -449,11 +450,13 @@ pub fn run(self: *HttpServer, address: sys_net.IpAddress) !void {
         if (comptime builtin.os.tag == .windows) try sys_net.setWindowsNonblocking(listener, true);
 
         // --port 0 asks the OS for an ephemeral port; log the one we actually got.
-        log.note(.mcp, "mcp http server running", .{ .address = try sys_net.boundAddress(listener) });
-        break :blk listener;
+        const bound = try sys_net.boundAddress(listener);
+        log.note(.mcp, "mcp http server running", .{ .address = bound });
+        break :blk .{ listener, bound };
     };
 
     if (comptime builtin.os.tag != .windows) self.listener.store(listener, .release);
+    if (builtin.is_test) self.test_bound_port.store(bound.getPort(), .release);
     defer switch (builtin.os.tag) {
         .windows, .linux => sys_net.close(listener),
         else => {}, // stop() already closed the listener.
@@ -951,13 +954,16 @@ const TestServer = struct {
         errdefer http.deinit();
         const address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
         const accept_thread = try std.Thread.spawn(.{}, run, .{ http, address });
-        var port: u16 = 0;
-        while (port == 0) {
-            lp.io.sleep(.fromMilliseconds(5), .awake) catch {};
-            const listener = http.listener.load(.acquire);
-            if (listener != -1) port = (sys_net.boundAddress(listener) catch continue).getPort();
+        errdefer {
+            http.stop();
+            accept_thread.join();
         }
-        return .{ .http = http, .accept_thread = accept_thread, .port = port };
+        for (0..1000) |_| {
+            const port = http.test_bound_port.load(.acquire);
+            if (port != 0) return .{ .http = http, .accept_thread = accept_thread, .port = port };
+            lp.io.sleep(.fromMilliseconds(5), .awake) catch {};
+        }
+        return error.TestListenerDidNotStart;
     }
 
     fn stop(self: *TestServer) void {

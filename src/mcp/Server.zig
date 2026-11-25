@@ -439,6 +439,23 @@ test "MCP.Server - RequestId matches the shapes JSON-RPC ids take" {
     try testing.expect(RequestId.from(.{ .number_string = "12345678901234567890123" }) == null);
 }
 
+extern "kernel32" fn CreatePipe(
+    read: *std.Io.File.Handle,
+    write: *std.Io.File.Handle,
+    attributes: ?*const std.os.windows.SECURITY_ATTRIBUTES,
+    size: u32,
+) callconv(.winapi) std.os.windows.BOOL;
+
+fn testPipe() ![2]std.Io.File.Handle {
+    var handles: [2]std.Io.File.Handle = undefined;
+    if (comptime @import("builtin").os.tag == .windows) {
+        if (!CreatePipe(&handles[0], &handles[1], null, 0).toBool()) return error.TestPipeFailed;
+    } else {
+        if (std.c.pipe(&handles) != 0) return error.TestPipeFailed;
+    }
+    return handles;
+}
+
 test "MCP.Server - notifications/cancelled aborts the in-flight tool call" {
     const allocator = testing.allocator;
     const app = testing.test_app;
@@ -451,8 +468,7 @@ test "MCP.Server - notifications/cancelled aborts the in-flight tool call" {
 
     // A pipe stands in for stdin: a feed thread writes the conversation
     // while processRequests runs its concurrent loop on this thread.
-    var fds: [2]std.posix.fd_t = undefined;
-    if (std.c.pipe(&fds) != 0) return error.TestUnexpectedResult;
+    const fds = try testPipe();
     const input: std.Io.File = .{ .handle = fds[0], .flags = .{ .nonblocking = false } };
     defer input.close(lp.io);
 
@@ -460,7 +476,7 @@ test "MCP.Server - notifications/cancelled aborts the in-flight tool call" {
     var stdin = input.readerStreaming(lp.io, &stdin_buf);
 
     const Feed = struct {
-        fn run(fd: std.posix.fd_t) void {
+        fn run(fd: std.Io.File.Handle) void {
             const write_end: std.Io.File = .{ .handle = fd, .flags = .{ .nonblocking = false } };
             var buf: [4096]u8 = undefined;
             var writer = write_end.writerStreaming(lp.io, &buf);
@@ -527,7 +543,11 @@ test "MCP.Server - notifications/cancelled aborts the in-flight tool call" {
         }
     };
 
-    const feed = try std.Thread.spawn(.{}, Feed.run, .{fds[1]});
+    const feed = std.Thread.spawn(.{}, Feed.run, .{fds[1]}) catch |err| {
+        const write_end: std.Io.File = .{ .handle = fds[1], .flags = .{ .nonblocking = false } };
+        write_end.close(lp.io);
+        return err;
+    };
     defer feed.join();
 
     const started = lp.datetime.milliTimestamp(.boot);

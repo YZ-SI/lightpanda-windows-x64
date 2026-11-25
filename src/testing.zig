@@ -50,6 +50,20 @@ pub fn tmpPath(tmp: *const std.testing.TmpDir, name: []const u8) ![:0]const u8 {
     return std.Io.Dir.path.joinZ(arena_allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path, name });
 }
 
+pub fn setNonblocking(socket: sys_net.socket_t) !void {
+    if (comptime @import("builtin").os.tag == .windows) return sys_net.setWindowsNonblocking(socket, true);
+    const flags = try sys_net.fcntl(socket, std.posix.F.GETFL, 0);
+    _ = try sys_net.fcntl(socket, std.posix.F.SETFL, flags | @as(u32, @bitCast(std.posix.O{ .NONBLOCK = true })));
+}
+
+pub fn setSocketTimeout(socket: sys_net.socket_t, option: u32, ms: u32) !void {
+    const timeout = if (comptime @import("builtin").os.tag == .windows)
+        ms
+    else
+        std.posix.timeval{ .sec = @intCast(ms / 1000), .usec = @intCast((ms % 1000) * 1000) };
+    try sys_net.setSocketOption(socket, std.posix.SOL.SOCKET, option, &std.mem.toBytes(timeout));
+}
+
 const App = @import("App.zig");
 const js = @import("browser/js/js.zig");
 const Config = @import("Config.zig");
@@ -641,8 +655,35 @@ pub const MockDecisions = struct {
     }
 };
 
-pub extern fn setenv(name: [*:0]u8, value: [*:0]u8, override: c_int) c_int;
-pub extern fn unsetenv(name: [*:0]u8) c_int;
+const PosixEnv = struct {
+    extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, override: c_int) c_int;
+    extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+};
+
+extern "c" fn _putenv_s(name: [*:0]const u8, value: [*:0]const u8) c_int;
+extern "kernel32" fn SetEnvironmentVariableA(name: [*:0]const u8, value: ?[*:0]const u8) callconv(.winapi) std.os.windows.BOOL;
+
+fn setWindowsFixtureEnv(name: [*:0]const u8, value: ?[*:0]const u8) c_int {
+    // Tests exercise both CRT getenv and Zig's live process environment.
+    const rc = _putenv_s(name, value orelse "");
+    if (rc != 0) return rc;
+    if (SetEnvironmentVariableA(name, value).toBool()) return 0;
+    if (value == null and std.os.windows.GetLastError() == .ENVVAR_NOT_FOUND) return 0;
+    return -1;
+}
+
+pub fn setenv(name: [*:0]const u8, value: [*:0]const u8, override: c_int) c_int {
+    if (comptime @import("builtin").os.tag == .windows) {
+        if (override == 0 and std.c.getenv(name) != null) return 0;
+        return setWindowsFixtureEnv(name, value);
+    }
+    return PosixEnv.setenv(name, value, override);
+}
+
+pub fn unsetenv(name: [*:0]const u8) c_int {
+    if (comptime @import("builtin").os.tag == .windows) return setWindowsFixtureEnv(name, null);
+    return PosixEnv.unsetenv(name);
+}
 
 pub var test_config: Config = undefined;
 

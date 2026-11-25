@@ -282,8 +282,10 @@ test "token store save/load/delete round-trips" {
     defer t.deinit(a);
     try storeSaveAt(scratch, dir, "codex", t);
 
-    const st = try tmp.dir.statFile(lp.io, "auth.json", .{});
-    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), st.permissions.toMode() & 0o777);
+    if (comptime builtin.os.tag != .windows) {
+        const st = try tmp.dir.statFile(lp.io, "auth.json", .{});
+        try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), st.permissions.toMode() & 0o777);
+    }
 
     const loaded = (try storeLoadAt(a, dir, "codex")).?;
     defer loaded.deinit(a);

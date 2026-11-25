@@ -1326,36 +1326,13 @@ const WindowsIO = struct {
         return false;
     }
 
-    // Windows has no socketpair(2); the standard emulation is a
-    // loopback TCP connection: the accepted end is what gets
-    // monitored, the connected end is what gets written to.
     fn wakePair() ![2]posix.socket_t {
-        const loopback: sys_net.IpAddress = .{ .ip4 = .loopback(0) };
-        const listener = try sys_net.socket(sys_net.family(&loopback), posix.SOCK.STREAM, posix.IPPROTO.TCP);
-        errdefer sys_net.close(listener);
-
-        const sa = sys_net.sockaddrFromAddress(&loopback);
-        try sys_net.bind(listener, sa.ptr(), sa.len);
-        try sys_net.listen(listener, 1);
-
-        // bind(2) on port 0 picked an ephemeral port; look it up
-        // so the connected end can reach it
-        var bound: posix.sockaddr.storage = undefined;
-        var bound_len: posix.socklen_t = @sizeOf(posix.sockaddr.storage);
-        try sys_net.getsockname(listener, @ptrCast(&bound), &bound_len);
-        const address = sys_net.addressFromSockaddr(@ptrCast(&bound));
-
-        const remote = try sys_net.connect(&address);
-        errdefer sys_net.close(remote);
-        const local = try sys_net.accept(listener, null, null, 0);
-        sys_net.close(listener);
-
-        // both ends non-blocking: the writes in stop() and
-        // signal() fail (and are logged) rather than block on a
-        // full buffer, and drain() always returns at once
-        try setNonBlocking(local);
-        try setNonBlocking(remote);
-        return .{ local, remote };
+        const pair = try sys_net.socketPair();
+        errdefer closePair(&pair);
+        // Wake writes and reads must return without waiting for the peer.
+        try setNonBlocking(pair[0]);
+        try setNonBlocking(pair[1]);
+        return pair;
     }
 
     fn closePair(pair: *const [2]posix.socket_t) void {
@@ -3977,15 +3954,12 @@ const MockCDP = struct {
 fn createTestClient() !TestClient {
     const address: sys_net.IpAddress = .{ .ip4 = .loopback(testing.test_cdp_port) };
     const socket = try sys_net.connect(&address);
+    errdefer sys_net.close(socket);
 
-    const timeout = std.mem.toBytes(posix.timeval{
-        .sec = 10,
-        .usec = 0,
-    });
-    try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &timeout);
-    try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.SNDTIMEO, &timeout);
+    try testing.setSocketTimeout(socket, posix.SO.RCVTIMEO, 10_000);
+    try testing.setSocketTimeout(socket, posix.SO.SNDTIMEO, 10_000);
     if (@hasDecl(posix.TCP, "NODELAY")) {
-        try posix.setsockopt(socket, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1)));
+        try sys_net.setSocketOption(socket, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1)));
     }
     return .{
         .socket = socket,
@@ -4013,7 +3987,7 @@ const TestClient = struct {
         var pos: usize = 0;
         var total_length: ?usize = null;
         while (true) {
-            const n = try posix.read(self.socket, self.buf[pos..]);
+            const n = try sys_net.readSocket(self.socket, self.buf[pos..]);
             if (n == 0) {
                 return if (pos == self.buf.len) error.MessageTooLarge else error.NoMoreData;
             }
@@ -4043,7 +4017,7 @@ const TestClient = struct {
         defer response.deinit(testing.allocator);
         var total_length: ?usize = null;
         while (true) {
-            const n = try posix.read(self.socket, &self.buf);
+            const n = try sys_net.readSocket(self.socket, &self.buf);
             if (n == 0) {
                 return error.NoMoreData;
             }
@@ -4118,7 +4092,7 @@ const TestClient = struct {
             if (try self.reader.next()) |msg| {
                 return msg;
             }
-            const n = try posix.read(self.socket, self.reader.readBuf());
+            const n = try sys_net.readSocket(self.socket, self.reader.readBuf());
             if (n == 0) {
                 return error.Closed;
             }
@@ -4151,7 +4125,7 @@ const LoopTest = struct {
     fn expectResponse(self: *const LoopTest, client: posix.socket_t, prefix: []const u8) !void {
         _ = self;
         var buf: [512]u8 = undefined;
-        const n = try posix.read(client, &buf);
+        const n = try sys_net.readSocket(client, &buf);
         try testing.expect(std.mem.startsWith(u8, buf[0..n], prefix));
     }
 
@@ -4161,8 +4135,7 @@ const LoopTest = struct {
         const client = try sys_net.connect(&self.address);
         errdefer sys_net.close(client);
         // never block the suite on a response that isn't coming
-        const timeout = std.mem.toBytes(posix.timeval{ .sec = 5, .usec = 0 });
-        try posix.setsockopt(client, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &timeout);
+        try testing.setSocketTimeout(client, posix.SO.RCVTIMEO, 5000);
 
         const before = self.server.http_connections.last;
         try pollReadable(self.server.listener);
@@ -4179,6 +4152,10 @@ const LoopTest = struct {
     // or write() returns, the peer's accept queue or read buffer can still be
     // empty. Linux processes it inline, so these tests never waited there.
     fn pollReadable(fd: posix.socket_t) !void {
+        if (comptime builtin.os.tag == .windows) {
+            if (!try sys_net.waitWindowsReadable(fd, 1000)) return error.Timeout;
+            return;
+        }
         var pfd = [_]posix.pollfd{.{ .fd = fd, .events = posix.POLL.IN, .revents = 0 }};
         if (try posix.poll(&pfd, 1000) == 0) {
             return error.Timeout;
@@ -4367,17 +4344,22 @@ test "server: unix listener accepts a client and removes owned socket on shutdow
     const server = try Server.init(testing.test_app, .{ .unix = path });
     var live = true;
     defer if (live) server.deinit();
-    try testing.expectEqual(0, std.c.access(path.ptr, 0));
+    _ = try tmp.dir.statFile(testing.io, "cdp.sock", .{ .follow_symlinks = false });
     try testing.expect(std.mem.indexOf(u8, server.json_version_response, "\"ws+unix://") != null);
     try testing.expectError(error.AddressInUse, Server.init(testing.test_app, .{ .unix = path }));
     try server.io_engine.monitorListener(server.listener);
 
-    const client = try sys_net.socket(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+    const flags = if (comptime builtin.os.tag == .windows)
+        posix.SOCK.STREAM
+    else
+        posix.SOCK.STREAM | posix.SOCK.CLOEXEC;
+    const client = try sys_net.socket(posix.AF.UNIX, flags, 0);
     defer sys_net.close(client);
     var address: posix.sockaddr.un = std.mem.zeroes(posix.sockaddr.un);
     address.family = posix.AF.UNIX;
     @memcpy(address.path[0..path.len], path);
     try testing.expectEqual(0, std.c.connect(client, @ptrCast(&address), @intCast(@offsetOf(posix.sockaddr.un, "path") + path.len + 1)));
+    try LoopTest.pollReadable(server.listener);
     try server.accept(lp.datetime.milliTimestamp(.boot));
     try testing.expect(server.http_connections.first != null);
 
@@ -4385,16 +4367,15 @@ test "server: unix listener accepts a client and removes owned socket on shutdow
     // --unix-socket, for one) send the bare `Host: localhost` that the TCP
     // listener refuses.
     const conn: *Connection = @fieldParentPtr("node", server.http_connections.first.?);
-    const timeout = std.mem.toBytes(posix.timeval{ .sec = 5, .usec = 0 });
-    try posix.setsockopt(client, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &timeout);
+    try testing.setSocketTimeout(client, posix.SO.RCVTIMEO, 5000);
     try sys_net.writeAll(client, "GET /json/version HTTP/1.1\r\nHost: localhost\r\n\r\n");
     try LoopTest.pollReadable(conn.socket);
     _ = server.runOnce();
     var buf: [512]u8 = undefined;
-    const n = try posix.read(client, &buf);
+    const n = try sys_net.readSocket(client, &buf);
     try testing.expect(std.mem.startsWith(u8, buf[0..n], "HTTP/1.1 200 OK\r\n"));
 
     server.deinit();
     live = false;
-    try testing.expect(std.c.access(path.ptr, 0) != 0);
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "cdp.sock", .{ .follow_symlinks = false }));
 }

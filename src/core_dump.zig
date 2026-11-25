@@ -62,6 +62,7 @@ extern fn setenv(name: [*:0]u8, value: [*:0]u8, override: c_int) c_int;
 extern fn unsetenv(name: [*:0]u8) c_int;
 
 test "core_dump: disabled only when the env var is set" {
+    if (comptime builtin.target.os.tag == .windows) return error.SkipZigTest;
     _ = unsetenv(@constCast("LIGHTPANDA_DISABLE_CORE_DUMP"));
     try testing.expectEqual(false, shouldDisable());
 
@@ -71,7 +72,7 @@ test "core_dump: disabled only when the env var is set" {
 }
 
 test "core_dump: disable zeroes the soft RLIMIT_CORE" {
-    if (builtin.target.os.tag == .windows) return;
+    if (comptime builtin.target.os.tag == .windows) return error.SkipZigTest;
 
     const original = try std.posix.getrlimit(.CORE);
     defer std.posix.setrlimit(.CORE, original) catch {};

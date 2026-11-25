@@ -23,6 +23,7 @@
 const std = @import("std");
 const lp = @import("lightpanda");
 const Command = @import("command.zig").Command;
+const testing = @import("../testing.zig");
 
 const Recorder = @This();
 
@@ -194,9 +195,6 @@ fn parseLine(arena: std.mem.Allocator, line: []const u8) Command {
     return Command.parse(arena, line) catch unreachable;
 }
 
-extern fn setenv(name: [*:0]u8, value: [*:0]u8, override: c_int) c_int;
-extern fn unsetenv(name: [*:0]u8) c_int;
-
 test "record filters state-mutating commands and comments" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -269,8 +267,8 @@ test "recordComment splits embedded newlines into separate comment lines" {
 test "recordComment scrubs literal LP_* values back to placeholders" {
     const var_name = "LP_RECORDER_COMMENT_TEST";
     const var_value = "topsecret";
-    _ = setenv(@constCast(var_name), @constCast(var_value), 1);
-    defer _ = unsetenv(@constCast(var_name));
+    _ = testing.setenv(var_name, var_value, 1);
+    defer _ = testing.unsetenv(var_name);
 
     var recorder: Recorder = .init(std.testing.allocator);
     defer recorder.deinit();
@@ -373,8 +371,8 @@ test "record scrubs literal LP_* values in JavaScript calls" {
 
     const var_name = "LP_RECORDER_COMMAND_TEST";
     const var_value = "secret-user";
-    _ = setenv(@constCast(var_name), @constCast(var_value), 1);
-    defer _ = unsetenv(@constCast(var_name));
+    _ = testing.setenv(var_name, var_value, 1);
+    defer _ = testing.unsetenv(var_name);
 
     var recorder: Recorder = .init(std.testing.allocator);
     defer recorder.deinit();

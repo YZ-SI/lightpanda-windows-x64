@@ -16,7 +16,7 @@ Download `lightpanda-1.0.5-windows-x64-3.zip` from the [Windows x64 release](htt
 
 Connect Puppeteer or Playwright over CDP at `http://127.0.0.1:9222`. Run `.\lightpanda.exe mcp` for the native MCP stdio transport.
 
-## Verified build
+## Published build
 
 | Item | Result |
 | --- | --- |
@@ -28,9 +28,20 @@ Connect Puppeteer or Playwright over CDP at `http://127.0.0.1:9222`. Run `.\ligh
 | Smoke tests | HTTPS, fetch hard deadline, CDP over TCP and a local socket, MCP stdio and HTTP, duplicate listeners, console shutdown |
 | Linux comparison | HTML and Markdown output matched for inline JavaScript, static and dynamic imports, and the IANA time zone fixture after line-ending normalization |
 
-The Windows port uses the host's certificate trust policy and follows Winsock's local socket rules. The full upstream test suite stopped at compilation on native Windows with 29 diagnostics from test code, including POSIX `socketpair`, file permission assertions, and Windows UTF-16 argument handling. Clean Windows installation testing is pending.
-
 The ZIP was built from [community commit `4c3c60af6`](https://github.com/YZ-SI/lightpanda-windows-x64/commit/4c3c60af6170834a7139ec9dd01a577040699978), based on upstream commit `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`. The Release includes the source patch, build record and SHA-256 checksums. The [dependency record](win-port/upstream.json) identifies the corresponding V8 and toolchain versions.
+
+The Windows port uses the host's certificate trust policy and follows Winsock's local socket rules. Clean Windows installation testing is pending.
+
+## Current source validation
+
+The upstream suite runs on the current port source on Windows 10 x64 and Linux x64. Both runs cover the same 2,445 named tests with zero failures. Both platforms skip seven WebDriver tests that require optional WPT extensions. Windows skips nine more cases for Linux crash signals, core dumps, and glibc allocator tuning.
+
+| Platform | Passed | Skipped |
+| --- | ---: | ---: |
+| Native Windows x64 | 2,429 | 16 |
+| Linux x64 | 2,438 | 7 |
+
+The current source fixes Windows WebDriver numeric parsing, socket backpressure, and the executable name in CLI help. Local fixtures also matched the official Linux 1.0.5 binary for WebDriver viewport changes, MCP file downloads, and HTML and Markdown output. The build instructions show how to run [the full native test suite](win-port/README.md#test-and-update).
 
 ## Attribution and license
 

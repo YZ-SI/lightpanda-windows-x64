@@ -234,9 +234,6 @@ pub const Event = union(enum) {
     };
 };
 
-extern fn setenv(name: [*:0]u8, value: [*:0]u8, override: c_int) c_int;
-extern fn unsetenv(name: [*:0]u8) c_int;
-
 const testing = @import("../testing.zig");
 test "telemetry: McpClient.fromName" {
     try testing.expectEqual(.claude_code, Event.McpClient.fromName("claude-code"));
@@ -250,11 +247,12 @@ test "telemetry: McpClient.fromName" {
 
 test "telemetry: always disabled in debug builds" {
     // Must be disabled regardless of environment variable.
-    _ = unsetenv(@constCast("LIGHTPANDA_DISABLE_TELEMETRY"));
+    _ = testing.unsetenv("LIGHTPANDA_DISABLE_TELEMETRY");
     try testing.expectEqual(true, isDisabled());
 
-    _ = setenv(@constCast("LIGHTPANDA_DISABLE_TELEMETRY"), @constCast(""), 0);
-    defer _ = unsetenv(@constCast("LIGHTPANDA_DISABLE_TELEMETRY"));
+    const value = if (@import("builtin").os.tag == .windows) "true" else "";
+    _ = testing.setenv("LIGHTPANDA_DISABLE_TELEMETRY", value, 0);
+    defer _ = testing.unsetenv("LIGHTPANDA_DISABLE_TELEMETRY");
     try testing.expectEqual(true, isDisabled());
 
     const FailingProvider = struct {

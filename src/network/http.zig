@@ -1212,10 +1212,8 @@ test "opensocketCallback: public IPv4 opens a real socket" {
     var sa = makeSockAddrV4(.{ 8, 8, 8, 8 });
 
     const fd = opensocketCallback(@ptrCast(@constCast(&filter)), @backingInt(libcurl.CurlSockType.ipcxn), &sa);
-    defer _ = std.c.close(fd);
-
-    // A real fd is always >= 0
-    try testing.expect(fd >= 0);
+    try testing.expect(fd != libcurl.CURL_SOCKET_BAD);
+    sys_net.close(if (comptime builtin.os.tag == .windows) @ptrFromInt(fd) else fd);
 }
 
 test "opensocketCallback: null clientp returns CURL_SOCKET_BAD (fail-closed)" {
@@ -1229,9 +1227,8 @@ test "opensocketCallback: block_private=false allows private IP" {
     const filter = IpFilter.init(false, null);
     var sa = makeSockAddrV4(.{ 127, 0, 0, 1 });
     const fd = opensocketCallback(@ptrCast(@constCast(&filter)), @backingInt(libcurl.CurlSockType.ipcxn), &sa);
-    defer _ = std.c.close(fd);
-
-    try testing.expect(fd >= 0);
+    try testing.expect(fd != libcurl.CURL_SOCKET_BAD);
+    sys_net.close(if (comptime builtin.os.tag == .windows) @ptrFromInt(fd) else fd);
 }
 
 test "Connection.inHttpRange: only a real status survives" {

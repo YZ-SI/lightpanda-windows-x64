@@ -1662,10 +1662,11 @@ test "MCP - save writes the script to disk" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const path = try testing.tmpPath(&tmp, "script.js");
+    const path_json = try std.json.Stringify.valueAlloc(testing.arena_allocator, path, .{});
 
     const msg = try testing.arena_allocator.print(
-        \\{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"save","arguments":{{"path":"{s}","script":"const page = new Page();\nawait page.goto(\"https://example.com\");"}}}}}}
-    , .{path});
+        \\{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"save","arguments":{{"path":{s},"script":"const page = new Page();\nawait page.goto(\"https://example.com\");"}}}}}}
+    , .{path_json});
     try router.handleMessage(server, testing.arena_allocator, msg);
     try testing.expect(std.mem.find(u8, out.written(), "saved 2 line") != null);
 
@@ -1682,16 +1683,17 @@ test "MCP - run: runs a script that save wrote" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const path = try testing.tmpPath(&tmp, "script.js");
+    const path_json = try std.json.Stringify.valueAlloc(aa, path, .{});
 
     try router.handleMessage(server, aa, try aa.print(
-        \\{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"save","arguments":{{"path":"{s}","script":"const page = new Page();\nawait page.goto('http://localhost:9582/src/browser/tests/mcp_actions.html');\nreturn page.evaluate(\"document.getElementById('btn').textContent\");"}}}}}}
-    , .{path}));
+        \\{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"save","arguments":{{"path":{s},"script":"const page = new Page();\nawait page.goto('http://localhost:9582/src/browser/tests/mcp_actions.html');\nreturn page.evaluate(\"document.getElementById('btn').textContent\");"}}}}}}
+    , .{path_json}));
     try testing.expect(std.mem.find(u8, out.written(), "\"isError\":false") != null);
 
     out.clearRetainingCapacity();
     try router.handleMessage(server, aa, try aa.print(
-        \\{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"run","arguments":{{"path":"{s}"}}}}}}
-    , .{path}));
+        \\{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"run","arguments":{{"path":{s}}}}}}}
+    , .{path_json}));
     try testing.expectEqual("Click Me\n", try testToolText(aa, out.written()));
 
     out.clearRetainingCapacity();
@@ -1702,8 +1704,8 @@ test "MCP - run: runs a script that save wrote" {
 
     out.clearRetainingCapacity();
     try router.handleMessage(server, aa, try aa.print(
-        \\{{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{{"name":"run","arguments":{{"path":"{s}","script":"return 1;"}}}}}}
-    , .{path}));
+        \\{{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{{"name":"run","arguments":{{"path":{s},"script":"return 1;"}}}}}}
+    , .{path_json}));
     try testing.expectJson(.{ .id = 4, .@"error" = .{ .code = -32602 } }, out.written());
 }
 
@@ -2719,9 +2721,10 @@ test "MCP - screenshot: inline image, file, unsafe path" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const path = try testing.tmpPath(&tmp, "screenshot.png");
+    const path_json = try std.json.Stringify.valueAlloc(testing.arena_allocator, path, .{});
 
     out.clearRetainingCapacity();
-    const to_file = try testing.arena_allocator.print("{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{{\"name\":\"screenshot\",\"arguments\":{{\"path\":\"{s}\",\"selector\":\"#hoverTarget\"}}}}}}", .{path});
+    const to_file = try testing.arena_allocator.print("{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{{\"name\":\"screenshot\",\"arguments\":{{\"path\":{s},\"selector\":\"#hoverTarget\"}}}}}}", .{path_json});
     try router.handleMessage(server, testing.arena_allocator, to_file);
     try testing.expect(std.mem.find(u8, out.written(), "Saved 1920x") != null);
     try testing.expect(std.mem.find(u8, out.written(), "\"type\":\"image\"") == null);

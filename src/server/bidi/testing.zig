@@ -57,10 +57,11 @@ pub const TestContext = struct {
         if (self.bidi_initialized) {
             self.driver.detach();
             self.bidi_.deinit();
+        } else {
+            sys_net.close(self.bidi_socket);
         }
         self.inbox.deinit();
-        _ = std.c.close(self.socket);
-        _ = std.c.close(self.bidi_socket);
+        sys_net.close(self.socket);
         base.reset();
     }
 
@@ -175,11 +176,20 @@ pub const TestContext = struct {
         });
         const expected_json = try json.parseFromSliceLeaky(json.Value, base.arena_allocator, serialized, .{});
 
-        try self.read();
-        for (self.received.items) |received| {
-            if (try base.isEqualJson(expected_json, received)) {
-                return;
+        const start: std.Io.Timestamp = .now(io, .awake);
+        var checked: usize = 0;
+        while (true) {
+            try self.read();
+            for (self.received.items[checked..]) |received| {
+                if (try base.isEqualJson(expected_json, received)) return;
             }
+            checked = self.received.items.len;
+
+            // The Windows fixture uses TCP. A synchronous write need not
+            // reach the other socket before the test's first read.
+            if (comptime @import("builtin").os.tag != .windows) break;
+            const remaining_ms = 1000 - start.durationTo(.now(io, .awake)).toMilliseconds();
+            if (remaining_ms <= 0 or !try sys_net.waitWindowsReadable(self.socket, @intCast(remaining_ms))) break;
         }
 
         std.debug.print("Expected:\n{s}\n\n", .{serialized});
@@ -224,7 +234,7 @@ pub const TestContext = struct {
 
     fn read(self: *TestContext) !void {
         while (true) {
-            const n = posix.read(self.socket, self.read_buf[self.read_at..]) catch |err| switch (err) {
+            const n = sys_net.readSocket(self.socket, self.read_buf[self.read_at..]) catch |err| switch (err) {
                 error.WouldBlock => return,
                 else => return err,
             };
@@ -282,28 +292,21 @@ const command_id_create = 9002;
 const command_id_navigate = 9003;
 
 pub fn context() !TestContext {
-    var pair: [2]posix.socket_t = undefined;
-    if (std.c.socketpair(posix.AF.LOCAL, posix.SOCK.STREAM, 0, &pair) != 0) {
-        return error.SocketPairFailed;
-    }
-
+    const pair = try sys_net.socketPair();
     errdefer {
-        _ = std.c.close(pair[0]);
-        _ = std.c.close(pair[1]);
+        sys_net.close(pair[0]);
+        sys_net.close(pair[1]);
     }
 
     // Replies are written synchronously, so reads never need to wait for data.
-    const flags = try sys_net.fcntl(pair[0], posix.F.GETFL, 0);
-    _ = try sys_net.fcntl(pair[0], posix.F.SETFL, flags | @as(u32, @bitCast(posix.O{ .NONBLOCK = true })));
-
-    const timeout = std.mem.toBytes(posix.timeval{ .sec = 0, .usec = 5_000 });
-    try posix.setsockopt(pair[1], posix.SOL.SOCKET, posix.SO.RCVTIMEO, &timeout);
-    try posix.setsockopt(pair[1], posix.SOL.SOCKET, posix.SO.SNDTIMEO, &timeout);
+    try base.setNonblocking(pair[0]);
+    try base.setSocketTimeout(pair[1], posix.SO.RCVTIMEO, 5);
+    try base.setSocketTimeout(pair[1], posix.SO.SNDTIMEO, 5);
 
     const buffer_size = std.mem.toBytes(@as(c_int, 32_768));
     for (pair) |socket| {
-        try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.RCVBUF, &buffer_size);
-        try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.SNDBUF, &buffer_size);
+        try sys_net.setSocketOption(socket, posix.SOL.SOCKET, posix.SO.RCVBUF, &buffer_size);
+        try sys_net.setSocketOption(socket, posix.SOL.SOCKET, posix.SO.SNDBUF, &buffer_size);
     }
 
     return .{

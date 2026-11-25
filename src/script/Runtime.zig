@@ -1531,7 +1531,7 @@ test "agent script runtime: page.getCookies returns cookie objects, also in a re
     );
 }
 
-test "agent script runtime: page.classify executes presets, categories and structured questions" {
+test "fresh environment: agent script runtime: page.classify executes presets, categories and structured questions" {
     defer testing.test_session.closeAllPages();
 
     const mock = try testing.MockDecisions.start(testing.arena_allocator);
@@ -1580,7 +1580,7 @@ test "agent script runtime: page.classify executes presets, categories and struc
     );
 }
 
-test "agent script runtime: page.classify missing API key throws" {
+test "fresh environment: agent script runtime: page.classify missing API key throws" {
     defer testing.test_session.closeAllPages();
 
     const mock = testing.MockDecisions.startWithoutKey();
@@ -1861,8 +1861,8 @@ test "agent script runtime: goto resolves $LP_* placeholders" {
     const runtime = try Runtime.init(testing.allocator, testing.test_app, testing.test_session, &registry);
     defer runtime.deinit();
 
-    _ = setenv(@constCast("LP_RUNTIME_GOTO_BASE"), @constCast("http://localhost:9582"), 1);
-    defer _ = unsetenv(@constCast("LP_RUNTIME_GOTO_BASE"));
+    _ = testing.setenv("LP_RUNTIME_GOTO_BASE", "http://localhost:9582", 1);
+    defer _ = testing.unsetenv("LP_RUNTIME_GOTO_BASE");
 
     try runTestScript(runtime,
         \\const page = new Page();
@@ -1871,9 +1871,6 @@ test "agent script runtime: goto resolves $LP_* placeholders" {
         \\if (btn !== "Click Me") throw new Error("wrong page: " + btn);
     );
 }
-
-extern fn setenv(name: [*:0]u8, value: [*:0]u8, override: c_int) c_int;
-extern fn unsetenv(name: [*:0]u8) c_int;
 
 test "agent script runtime: goto with invalid arguments rejects instead of crashing" {
     defer testing.test_session.closeAllPages();

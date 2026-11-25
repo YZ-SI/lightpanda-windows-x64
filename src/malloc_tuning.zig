@@ -84,6 +84,7 @@ extern fn setenv(name: [*:0]u8, value: [*:0]u8, override: c_int) c_int;
 extern fn unsetenv(name: [*:0]u8) c_int;
 
 test "malloc_tuning: glibc env overrides" {
+    if (comptime !is_glibc) return error.SkipZigTest;
     _ = unsetenv(@constCast("MALLOC_MMAP_THRESHOLD_"));
     _ = unsetenv(@constCast("GLIBC_TUNABLES"));
     try testing.expectEqual(false, userConfigured());

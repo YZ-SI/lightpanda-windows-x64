@@ -59,10 +59,11 @@ pub const TestContext = struct {
         if (self.cdp_initialized) {
             self.driver.detach();
             self.cdp_.deinit();
+        } else {
+            sys_net.close(self.cdp_socket);
         }
         self.inbox.deinit();
-        _ = std.c.close(self.socket);
-        _ = std.c.close(self.cdp_socket);
+        sys_net.close(self.socket);
         base.reset();
     }
 
@@ -281,7 +282,7 @@ pub const TestContext = struct {
 
     fn read(self: *TestContext) !void {
         while (true) {
-            const n = posix.read(self.socket, self.read_buf[self.read_at..]) catch |err| switch (err) {
+            const n = sys_net.readSocket(self.socket, self.read_buf[self.read_at..]) catch |err| switch (err) {
                 error.WouldBlock => return,
                 else => return err,
             };
@@ -337,29 +338,22 @@ pub const TestContext = struct {
 };
 
 pub fn context() !TestContext {
-    var pair: [2]posix.socket_t = undefined;
-    const rc = std.c.socketpair(posix.AF.LOCAL, posix.SOCK.STREAM, 0, &pair);
-    if (rc != 0) {
-        return error.SocketPairFailed;
-    }
-
+    const pair = try sys_net.socketPair();
     errdefer {
-        _ = std.c.close(pair[0]);
-        _ = std.c.close(pair[1]);
+        sys_net.close(pair[0]);
+        sys_net.close(pair[1]);
     }
 
     // Replies are written synchronously, so reads never need to wait for data.
-    const flags = try sys_net.fcntl(pair[0], posix.F.GETFL, 0);
-    _ = try sys_net.fcntl(pair[0], posix.F.SETFL, flags | @as(u32, @bitCast(posix.O{ .NONBLOCK = true })));
+    try base.setNonblocking(pair[0]);
+    try base.setSocketTimeout(pair[1], posix.SO.RCVTIMEO, 5);
+    try base.setSocketTimeout(pair[1], posix.SO.SNDTIMEO, 5);
 
-    const timeout = std.mem.toBytes(posix.timeval{ .sec = 0, .usec = 5_000 });
-    try posix.setsockopt(pair[1], posix.SOL.SOCKET, posix.SO.RCVTIMEO, &timeout);
-    try posix.setsockopt(pair[1], posix.SOL.SOCKET, posix.SO.SNDTIMEO, &timeout);
-
-    try posix.setsockopt(pair[0], posix.SOL.SOCKET, posix.SO.RCVBUF, &std.mem.toBytes(@as(c_int, 32_768)));
-    try posix.setsockopt(pair[0], posix.SOL.SOCKET, posix.SO.SNDBUF, &std.mem.toBytes(@as(c_int, 32_768)));
-    try posix.setsockopt(pair[1], posix.SOL.SOCKET, posix.SO.RCVBUF, &std.mem.toBytes(@as(c_int, 32_768)));
-    try posix.setsockopt(pair[1], posix.SOL.SOCKET, posix.SO.SNDBUF, &std.mem.toBytes(@as(c_int, 32_768)));
+    const buffer_size = std.mem.toBytes(@as(c_int, 32_768));
+    for (pair) |socket| {
+        try sys_net.setSocketOption(socket, posix.SOL.SOCKET, posix.SO.RCVBUF, &buffer_size);
+        try sys_net.setSocketOption(socket, posix.SOL.SOCKET, posix.SO.SNDBUF, &buffer_size);
+    }
 
     return .{
         .cdp_socket = pair[1],

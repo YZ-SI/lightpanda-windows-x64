@@ -21,7 +21,18 @@ Puppeteer 和 Playwright 可通过 CDP 连接 `http://127.0.0.1:9222`。MCP stdi
 
 `1.0.5+windows.3` 来自[社区提交 `4c3c60af6`](https://github.com/YZ-SI/lightpanda-windows-x64/commit/4c3c60af6170834a7139ec9dd01a577040699978)，基于官方 [1.0.5](https://github.com/lightpanda-io/browser/releases/tag/1.0.5) 的提交 `8f220d5b49d9ceb3065f6d2c1bb10356dbc12b7f`。Windows 10 x64 上的上游 Web API、URL 和抓取子集合计通过 246 项，跳过 7 项。两端使用同一个夹具，验证内联脚本、静态和动态导入、IANA 时区及文档时间。统一换行符后，HTML 和 Markdown 输出与官方 Linux 版一致。
 
-原生 Windows 全量测试在编译阶段报告 29 条诊断，尚未进入测试执行。待适配的测试代码包括 POSIX `socketpair`、文件权限断言和 Windows UTF-16 命令行参数。移植源码在 Linux 上运行全量测试，通过 2,435 项，跳过 7 项。干净 Windows 安装环境的复测待完成。
+### 当前源码
+
+Windows 10 x64 和 Linux x64 已执行同一组 2,445 个测试用例，两端均无失败。
+
+| 平台 | 通过 | 跳过 |
+| --- | ---: | ---: |
+| 原生 Windows x64 | 2,429 | 16 |
+| Linux x64 | 2,438 | 7 |
+
+两端都跳过了 7 个需要启用 WPT 扩展的 WebDriver 用例。Windows 额外跳过 9 个涉及 Linux 崩溃信号、核心转储和 glibc 内存分配器调优的用例。
+
+当前源码修复了 Windows 上的 WebDriver 数值解析、套接字发送回压和命令行帮助中的程序名显示。WebDriver 视口调整、MCP 文件下载、HTML 和 Markdown 输出也通过了与官方 Linux 1.0.5 的本地对照。干净 Windows 安装环境的复测待完成。
 
 发布附件包含源码补丁、构建记录和 SHA-256 校验文件。也可以[从源码构建](README.md)，或查看[依赖锁定记录](upstream.json)和[上游同步、构建与验收流程](release/README.md)。
 

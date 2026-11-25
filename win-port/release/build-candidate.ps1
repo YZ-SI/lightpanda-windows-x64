@@ -85,13 +85,19 @@ try {
     $rustArchive = (Resolve-Path -LiteralPath (Join-Path $cargoDir "$rustTarget/release/liblightpanda_ffi.a")).Path
 
     $buildScript = Join-Path $source 'win-port/build.ps1'
-    $buildArgs = @{ Zig = $zigExe; V8Archive = $v8Archive; RustArchive = $rustArchive; Version = $version }
-    & $buildScript @buildArgs -TestFilter 'URL:' 2>&1 |
-        Tee-Object -FilePath (Join-Path $logs 'upstream-url-tests.log') | Out-Host
-    if (-not (Select-String -LiteralPath (Join-Path $logs 'upstream-url-tests.log') -Pattern '\b([1-9]\d*) of \1 tests passed\b' -Quiet)) {
-        throw 'The upstream URL test log contains no complete nonzero test pass.'
+    $buildArgs = @{ Zig = $zigExe; V8Archive = $v8Archive; RustArchive = $rustArchive }
+    $testLog = Join-Path $logs 'upstream-windows-tests.log'
+    $savedFilter = $env:TEST_FILTER
+    try {
+        $env:TEST_FILTER = $null
+        & $buildScript @buildArgs -Test 2>&1 | Tee-Object -FilePath $testLog | Out-Host
+    } finally {
+        $env:TEST_FILTER = $savedFilter
     }
-    & $buildScript @buildArgs 2>&1 | Tee-Object -FilePath (Join-Path $logs 'windows-build.log') | Out-Host
+    if (-not (Select-String -LiteralPath $testLog -Pattern '\b([1-9]\d*) of \1 tests passed\b' -Quiet)) {
+        throw 'The upstream Windows test log contains no complete nonzero test pass.'
+    }
+    & $buildScript @buildArgs -Version $version 2>&1 | Tee-Object -FilePath (Join-Path $logs 'windows-build.log') | Out-Host
 } finally {
     $env:PATH = $oldPath
     $env:LIGHTPANDA_DISABLE_TELEMETRY = $oldTelemetry

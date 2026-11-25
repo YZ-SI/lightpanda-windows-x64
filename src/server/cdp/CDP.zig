@@ -1292,8 +1292,11 @@ test "cdp: run sends a close frame on pending terminate" {
 
     // The client should receive a close frame (code 1001, going away), not
     // just an abrupt socket close.
+    if (comptime @import("builtin").os.tag == .windows) {
+        try testing.expect(try sys_net.waitWindowsReadable(ctx.socket, 1000));
+    }
     var buf: [WS.CLOSE_GOING_AWAY.len]u8 = undefined;
-    const n = try posix.read(ctx.socket, &buf);
+    const n = try sys_net.readSocket(ctx.socket, &buf);
     try testing.expectEqualSlices(u8, &WS.CLOSE_GOING_AWAY, buf[0..n]);
 }
 

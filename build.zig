@@ -628,7 +628,7 @@ fn linkV8(
 
 fn linkRust(b: *Build, mod: *Build.Module, deps: Deps, prebuilt_rust_path: ?[]const u8) void {
     if (prebuilt_rust_path) |path| {
-        mod.addObjectFile(.{ .cwd_relative = path });
+        linkRustArchive(b, mod, .{ .cwd_relative = path });
         return;
     }
 
@@ -671,7 +671,23 @@ fn linkRust(b: *Build, mod: *Build.Module, deps: Deps, prebuilt_rust_path: ?[]co
         out_dir.path(b, "x86_64-pc-windows-gnu").path(b, out_subdir).path(b, "liblightpanda_ffi.a")
     else
         out_dir.path(b, out_subdir).path(b, "liblightpanda_ffi.a");
-    mod.addObjectFile(obj);
+    linkRustArchive(b, mod, obj);
+}
+
+fn linkRustArchive(b: *Build, mod: *Build.Module, archive: Build.LazyPath) void {
+    const target = mod.resolved_target.?.result;
+    if (target.os.tag == .windows and target.abi == .gnu) {
+        // Rust's compiler_builtins can otherwise satisfy Zig's f128 calls
+        // with incompatible Windows calling conventions.
+        const python = if (builtin.os.tag == .windows) "python" else "python3";
+        const filter = b.addSystemCommand(&.{python});
+        filter.addFileArg(b.path("win-port/filter-rust-builtins.py"));
+        filter.addArg(b.graph.zig_exe);
+        filter.addFileArg(archive);
+        mod.addObjectFile(filter.addOutputFileArg2("liblightpanda_ffi.a", .{}));
+    } else {
+        mod.addObjectFile(archive);
+    }
 }
 
 /// Registers every file under `root` (relative to the build root) as an

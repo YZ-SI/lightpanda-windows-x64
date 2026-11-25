@@ -220,13 +220,41 @@ pub fn boundAddress(sock: socket_t) !IpAddress {
 
 pub fn connect(addr: *const IpAddress) !socket_t {
     const sock = try socket(family(addr), posix.SOCK.STREAM, posix.IPPROTO.TCP);
-    errdefer _ = c.close(sock);
+    errdefer close(sock);
     const sa = sockaddrFromAddress(addr);
     const rc = c.connect(sock, sa.ptr(), sa.len);
     if (rc != 0) {
+        if (comptime native_os == .windows) return wsaError(WSAGetLastError());
         return errnoError(c.errno(rc));
     }
     return sock;
+}
+
+pub fn socketPair() ![2]socket_t {
+    if (comptime native_os == .windows) {
+        const loopback: IpAddress = .{ .ip4 = .loopback(0) };
+        const listener = try socket(posix.AF.INET, posix.SOCK.STREAM, posix.IPPROTO.TCP);
+        defer close(listener);
+        try setListenerAddressPolicy(listener);
+        const sa = sockaddrFromAddress(&loopback);
+        try bind(listener, sa.ptr(), sa.len);
+        try listen(listener, 1);
+
+        const address = try boundAddress(listener);
+        const remote = try connect(&address);
+        errdefer close(remote);
+        const local = try accept(listener, null, null, 0);
+        errdefer close(local);
+        const enabled = std.mem.toBytes(@as(c_int, 1));
+        try setSocketOption(local, posix.IPPROTO.TCP, posix.TCP.NODELAY, &enabled);
+        try setSocketOption(remote, posix.IPPROTO.TCP, posix.TCP.NODELAY, &enabled);
+        return .{ local, remote };
+    }
+
+    var pair: [2]socket_t = undefined;
+    const rc = c.socketpair(posix.AF.LOCAL, posix.SOCK.STREAM, 0, &pair);
+    if (rc != 0) return errnoError(c.errno(rc));
+    return pair;
 }
 
 // ws2_32 socket I/O for Windows, declared directly (the same
@@ -255,11 +283,20 @@ pub fn setWindowsNonblocking(sock: socket_t, enable: bool) !void {
 }
 
 pub fn waitWindowsReadable(sock: socket_t, timeout_ms: c_int) !bool {
-    const poll_read_normal = 0x0100;
-    var fd: WindowsPollFd = .{ .socket = @intFromPtr(sock), .events = poll_read_normal };
+    return waitWindowsSocket(sock, 0x0100, timeout_ms); // POLLRDNORM
+}
+
+pub fn waitWritable(sock: socket_t, timeout_ms: c_int) !bool {
+    if (comptime native_os == .windows) return waitWindowsSocket(sock, 0x0010, timeout_ms); // POLLWRNORM
+    var fds = [_]posix.pollfd{.{ .fd = sock, .events = posix.POLL.OUT, .revents = 0 }};
+    return try posix.poll(&fds, timeout_ms) != 0;
+}
+
+fn waitWindowsSocket(sock: socket_t, events: c_short, timeout_ms: c_int) !bool {
+    var fd: WindowsPollFd = .{ .socket = @intFromPtr(sock), .events = events };
     const rc = WSAPoll(&fd, 1, timeout_ms);
     if (rc < 0) return wsaError(WSAGetLastError());
-    if (rc > 0 and fd.revents & poll_read_normal == 0) return error.Unexpected;
+    if (rc > 0 and fd.revents & events == 0) return error.Unexpected;
     return rc > 0;
 }
 

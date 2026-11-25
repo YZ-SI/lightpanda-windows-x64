@@ -3789,10 +3789,8 @@ test "markdown: a same-url page whose navigation failed is navigated again" {
 
 fn testDownload(registry: *NodeRegistry, url: []const u8, path: []const u8) !ToolResult {
     const aa = testing.arena_allocator;
-    const args = try std.json.parseFromSliceLeaky(std.json.Value, aa, try aa.print(
-        "{{\"url\":\"{s}\",\"path\":\"{s}\"}}",
-        .{ url, path },
-    ), .{});
+    const json = try std.json.Stringify.valueAlloc(aa, .{ .url = url, .path = path }, .{});
+    const args = try std.json.parseFromSliceLeaky(std.json.Value, aa, json, .{});
     return call(aa, testing.test_session, registry, "download", args, .{ .source = .user });
 }
 

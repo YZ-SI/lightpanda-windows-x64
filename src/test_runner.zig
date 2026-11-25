@@ -69,7 +69,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    var runner = Runner.init(allocator, arena.allocator(), &ta, env);
+    var runner = Runner.init(allocator, arena.allocator(), &ta, env, init.environ_map);
     RUNNER = &runner;
     try runner.run(std.testing.io_instance.io());
 }
@@ -78,14 +78,16 @@ const Runner = struct {
     env: Env,
     allocator: Allocator,
     ta: *TrackingAllocator,
+    environ: *const std.process.Environ.Map,
 
     // per-test arena, used for collecting subtests, then for the final Report
     arena: Allocator,
     subtests: std.ArrayList([]const u8),
 
-    fn init(allocator: Allocator, arena: Allocator, ta: *TrackingAllocator, env: Env) Runner {
+    fn init(allocator: Allocator, arena: Allocator, ta: *TrackingAllocator, env: Env, environ: *const std.process.Environ.Map) Runner {
         return .{
             .ta = ta,
+            .environ = environ,
             .env = env,
             .arena = arena,
             .subtests = .empty,
@@ -137,6 +139,9 @@ const Runner = struct {
             if (isSetup(t) or isTeardown(t) or isAfterEach(t)) {
                 continue;
             }
+            if (self.env.isolated_case) |name| {
+                if (!std.mem.eql(u8, name, t.name)) continue;
+            }
 
             if (claim) |*c| {
                 defer index += 1;
@@ -163,7 +168,7 @@ const Runner = struct {
                 }
             }
 
-            const friendly_name = blk: {
+            const test_name = blk: {
                 const name = t.name;
                 var it = std.mem.splitScalar(u8, name, '.');
                 while (it.next()) |value| {
@@ -174,6 +179,9 @@ const Runner = struct {
                 }
                 break :blk name;
             };
+            const isolation_prefix = "fresh environment: ";
+            const fresh_environment = std.mem.startsWith(u8, test_name, isolation_prefix);
+            const friendly_name = if (fresh_environment) test_name[isolation_prefix.len..] else test_name;
             defer {
                 self.subtests = .empty;
                 const arena: *std.heap.ArenaAllocator = @ptrCast(@alignCast(self.arena.ptr));
@@ -185,7 +193,10 @@ const Runner = struct {
                 .canary = 0xc3a701ba,
                 .check_write_after_free = true,
             });
-            var result = t.func();
+            var result = if (builtin.os.tag == .windows and fresh_environment and self.env.isolated_case == null)
+                self.runIsolatedCase(io, t.name)
+            else
+                t.func();
             if (after_each) |ae| {
                 // always runs, so that it can reset state, but it can only
                 // turn a passing test into a failing one.
@@ -279,6 +290,38 @@ const Runner = struct {
         }
 
         std.process.exit(if (fail == 0) 0 else 1);
+    }
+
+    fn runIsolatedCase(self: *Runner, io: Io, name: []const u8) !void {
+        // The Windows decision dependency copies the environment on first
+        // use. Each mock case needs its own snapshot and loopback endpoint.
+        var child_env = try self.environ.clone(self.arena);
+        defer child_env.deinit();
+        for ([_][]const u8{
+            "TEST_FILTER",                  "TEST_REPORT",
+            "TEST_VERBOSE",                 "METRICS",
+            "TYPESAFE_API_KEY",             "TYPESAFE_BASE_URL",
+            "GOOGLE_API_KEY",               "GEMINI_API_KEY",
+            "GOOGLE_GENAI_USE_VERTEXAI",    "GOOGLE_GEMINI_BASE_URL",
+            "LIGHTPANDA_DECISION_PROVIDER",
+        }) |key| _ = child_env.orderedRemove(key);
+        try child_env.put("TEST_ISOLATED_CASE", name);
+        const exe = try std.process.executablePathAlloc(io, self.arena);
+        const output = try std.process.run(self.arena, io, .{
+            .argv = &.{exe},
+            .environ_map = &child_env,
+            .stdout_limit = .limited(1024 * 1024),
+            .stderr_limit = .limited(1024 * 1024),
+            .timeout = .{ .duration = .{ .raw = .fromSeconds(45), .clock = .awake } },
+        });
+        const passed = std.mem.find(u8, output.stderr, "1 of 1 test passed") != null or
+            std.mem.find(u8, output.stdout, "1 of 1 test passed") != null;
+        const leaked = std.mem.find(u8, output.stderr, "Memory Leak") != null or
+            std.mem.find(u8, output.stdout, "Memory Leak") != null;
+        if (!output.term.success() or !passed or leaked) {
+            Printer.fmt("{s}{s}", .{ output.stdout, output.stderr });
+            return error.IsolatedTestFailed;
+        }
     }
 
     fn printMetrics(self: *Runner, io: Io, ns_duration: u64) !void {
@@ -574,6 +617,7 @@ const Env = struct {
     // set in a process spawned to run one share of the suite: its Claim file
     claim: ?[]const u8,
     report: ?[]const u8,
+    isolated_case: ?[]const u8,
 
     fn init(map: *const std.process.Environ.Map) Env {
         const full_filter = readEnv(map, "TEST_FILTER");
@@ -590,6 +634,7 @@ const Env = struct {
             .jobs = if (metrics) 1 else readEnvInt(map, "TEST_JOBS") orelse defaultJobs(filter, subfilter),
             .claim = readEnv(map, "TEST_CLAIM"),
             .report = readEnv(map, "TEST_REPORT"),
+            .isolated_case = if (builtin.os.tag == .windows) readEnv(map, "TEST_ISOLATED_CASE") else null,
         };
     }
 

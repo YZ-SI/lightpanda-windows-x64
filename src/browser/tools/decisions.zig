@@ -322,7 +322,7 @@ pub fn settleAndFollow(session: *lp.Session, registry: *NodeRegistry, scope: too
 const testing = @import("../../testing.zig");
 const call = tools.call;
 
-test "classify: the page is still serviced while the model is asked" {
+test "fresh environment: classify: the page is still serviced while the model is asked" {
     var registry: NodeRegistry = .init(std.testing.allocator);
     defer registry.deinit();
 
@@ -347,7 +347,7 @@ test "classify: the page is still serviced while the model is asked" {
     try std.testing.expect(after > before);
 }
 
-test "classify: a page that navigates while the model is asked is not answered for" {
+test "fresh environment: classify: a page that navigates while the model is asked is not answered for" {
     var registry: NodeRegistry = .init(std.testing.allocator);
     defer registry.deinit();
 
@@ -369,7 +369,7 @@ test "classify: a page that navigates while the model is asked is not answered f
     try std.testing.expect(std.mem.find(u8, url.text, "consent_banner.html") != null);
 }
 
-test "classify: Gemini answers through the same questions" {
+test "fresh environment: classify: Gemini answers through the same questions" {
     var registry: NodeRegistry = .init(std.testing.allocator);
     defer registry.deinit();
 
@@ -389,7 +389,7 @@ test "classify: Gemini answers through the same questions" {
     try std.testing.expect(std.mem.find(u8, result.text, "\"product\"") != null);
 }
 
-test "classify: an input Gemini blocks is reported with its reason" {
+test "fresh environment: classify: an input Gemini blocks is reported with its reason" {
     var registry: NodeRegistry = .init(std.testing.allocator);
     defer registry.deinit();
 

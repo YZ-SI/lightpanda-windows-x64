@@ -17,6 +17,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const lp = @import("lightpanda");
 const log = lp.log;
@@ -453,12 +454,15 @@ pub fn Builder(comptime commands: anytype) type {
             };
         }
 
-        /// Parses executable name, command and options via single call.
+        /// Parses executable name, command and options into the caller's arena.
         pub fn parse(allocator: Allocator, proc_args: std.process.Args) !struct { []const u8, Union } {
             var args = try std.process.Args.Iterator.initAllocator(proc_args, allocator);
             defer args.deinit();
 
-            const exec_name = std.fs.path.basename(args.next().?);
+            const basename = std.fs.path.basename(args.next().?);
+            // The Windows iterator frees its decoded arguments on deinit.
+            const exec_name = if (comptime builtin.os.tag == .windows) try allocator.dupe(u8, basename) else basename;
+            errdefer if (comptime builtin.os.tag == .windows) allocator.free(exec_name);
 
             const cmd_str: []const u8 = args.next() orelse "serve";
             inline for (commands) |command| {
@@ -510,8 +514,9 @@ pub fn Builder(comptime commands: anytype) type {
             // "cmd_str" wasn't a command but an option. We can't reset args, but
             // we can create a new one. Not great, but this fallback is temporary
             // as we transition to this command mode approach.
+            const legacy_args = try std.process.Args.Iterator.initAllocator(proc_args, allocator);
             args.deinit();
-            args = try std.process.Args.Iterator.initAllocator(proc_args, allocator);
+            args = legacy_args;
             // Skip the `exec_name`.
             _ = args.skip();
 

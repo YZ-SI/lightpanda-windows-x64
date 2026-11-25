@@ -1367,10 +1367,7 @@ test "http: a request whose Content-Length, Host or Origin is ambiguous is inval
 }
 
 test "http: the read buffer grows with the request and gives the space back" {
-    var pair: [2]posix.socket_t = undefined;
-    if (std.c.socketpair(posix.AF.LOCAL, posix.SOCK.STREAM, 0, &pair) != 0) {
-        return error.SocketPairFailed;
-    }
+    const pair = try sys_net.socketPair();
     defer sys_net.close(pair[0]);
     defer sys_net.close(pair[1]);
 
@@ -1432,10 +1429,7 @@ test "http: a request can arrive over any number of reads" {
 // Writes head ++ body in pieces ending at each of `splits` (ascending) and
 // expects the request to be incomplete until the last piece arrives.
 fn expectSplitRequest(head: []const u8, body: []const u8, splits: []const usize) !void {
-    var pair: [2]posix.socket_t = undefined;
-    if (std.c.socketpair(posix.AF.LOCAL, posix.SOCK.STREAM, 0, &pair) != 0) {
-        return error.SocketPairFailed;
-    }
+    const pair = try sys_net.socketPair();
     defer sys_net.close(pair[0]);
     defer sys_net.close(pair[1]);
 
@@ -1481,10 +1475,7 @@ fn readWritten(state: *Connection.State, buffer: *Connection.Buffer, socket: pos
 }
 
 test "http: a declared body is sized upfront" {
-    var pair: [2]posix.socket_t = undefined;
-    if (std.c.socketpair(posix.AF.LOCAL, posix.SOCK.STREAM, 0, &pair) != 0) {
-        return error.SocketPairFailed;
-    }
+    const pair = try sys_net.socketPair();
     defer sys_net.close(pair[0]);
     defer sys_net.close(pair[1]);
 

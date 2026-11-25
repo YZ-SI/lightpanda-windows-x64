@@ -757,33 +757,39 @@ test "login: the recorded selectors are filled and submitted without the model" 
     try std.testing.expect(std.mem.find(u8, tree.text, "*****") != null);
 }
 
-test "login: the decision model picks the identifier, the password field and the submit control" {
-    for (std.enums.values(testing.MockDecisions.Provider)) |provider| {
-        var registry: NodeRegistry = .init(std.testing.allocator);
-        defer registry.deinit();
-
-        var page = try testing.pageTest("login_form.html", .{});
-        defer page.close();
-
-        const aa = testing.arena_allocator;
-        const mock = try testing.MockDecisions.startAs(aa, provider);
-        defer mock.stop();
-
-        // decideOnly, so nothing is typed and the decoy newsletter form is the
-        // only thing that could have been picked by mistake.
-        const args = try std.json.parseFromSliceLeaky(std.json.Value, aa,
-            \\{"username":"ada","password":"hunter2","decideOnly":true}
-        , .{});
-        const result = try call(aa, page.session, &registry, "login", args, .{ .source = .user });
-        try std.testing.expect(!result.is_error);
-        try std.testing.expect(std.mem.find(u8, result.text, "\"usernameSelector\":\"#user\"") != null);
-        try std.testing.expect(std.mem.find(u8, result.text, "\"passwordSelector\":\"#pass\"") != null);
-        try std.testing.expect(std.mem.find(u8, result.text, "\"submitSelector\":\"#submit\"") != null);
-        try std.testing.expect(std.mem.find(u8, result.text, "\"submitted\":true") == null);
-    }
+test "fresh environment: login: the decision model picks the identifier, the password field and the submit control (typesafe)" {
+    try testDecisionLogin(.typesafe);
 }
 
-test "login: the password waits for the step that asks for it" {
+test "fresh environment: login: the decision model picks the identifier, the password field and the submit control (gemini)" {
+    try testDecisionLogin(.gemini);
+}
+
+fn testDecisionLogin(provider: testing.MockDecisions.Provider) !void {
+    var registry: NodeRegistry = .init(std.testing.allocator);
+    defer registry.deinit();
+
+    var page = try testing.pageTest("login_form.html", .{});
+    defer page.close();
+
+    const aa = testing.arena_allocator;
+    const mock = try testing.MockDecisions.startAs(aa, provider);
+    defer mock.stop();
+
+    // decideOnly, so nothing is typed and the decoy newsletter form is the
+    // only thing that could have been picked by mistake.
+    const args = try std.json.parseFromSliceLeaky(std.json.Value, aa,
+        \\{"username":"ada","password":"hunter2","decideOnly":true}
+    , .{});
+    const result = try call(aa, page.session, &registry, "login", args, .{ .source = .user });
+    try std.testing.expect(!result.is_error);
+    try std.testing.expect(std.mem.find(u8, result.text, "\"usernameSelector\":\"#user\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.text, "\"passwordSelector\":\"#pass\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.text, "\"submitSelector\":\"#submit\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.text, "\"submitted\":true") == null);
+}
+
+test "fresh environment: login: the password waits for the step that asks for it" {
     var registry: NodeRegistry = .init(std.testing.allocator);
     defer registry.deinit();
 
@@ -813,7 +819,7 @@ test "login: the password waits for the step that asks for it" {
     try std.testing.expect(std.mem.find(u8, status.text, "submitted") != null);
 }
 
-test "login: a later step that asks for the password in the clear is refused" {
+test "fresh environment: login: a later step that asks for the password in the clear is refused" {
     var registry: NodeRegistry = .init(std.testing.allocator);
     defer registry.deinit();
 
@@ -859,7 +865,7 @@ test "login: a recorded two-step login submits the identifier before the passwor
     try std.testing.expect(std.mem.find(u8, status.text, "submitted") != null);
 }
 
-test "login: a verification that fails still reports that credentials went out" {
+test "fresh environment: login: a verification that fails still reports that credentials went out" {
     var registry: NodeRegistry = .init(std.testing.allocator);
     defer registry.deinit();
 
@@ -906,7 +912,7 @@ test "login: a recorded call with decideOnly checks the fields and types nothing
     try std.testing.expect(std.mem.find(u8, wrong.text, "input[type=password]") != null);
 }
 
-test "login: the password field is checked again after the username went in" {
+test "fresh environment: login: the password field is checked again after the username went in" {
     var registry: NodeRegistry = .init(std.testing.allocator);
     defer registry.deinit();
 

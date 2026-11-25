@@ -1417,6 +1417,33 @@ pub fn parseArgs(allocator: Allocator, proc_args: std.process.Args) !Config {
     return config;
 }
 
+fn testProcessArgs(allocator: Allocator, argv: []const [*:0]const u8) !std.process.Args {
+    if (comptime @import("builtin").os.tag != .windows) return .{ .vector = argv };
+
+    // Windows supplies one UTF-16 command line. Quote each test argument so
+    // the same values reach the production parser on both platforms.
+    var command_line: std.Io.Writer.Allocating = .init(allocator);
+    defer command_line.deinit();
+    const writer = &command_line.writer;
+    for (argv, 0..) |arg, index| {
+        if (index != 0) try writer.writeByte(' ');
+        try writer.writeByte('"');
+        var slashes: usize = 0;
+        for (std.mem.span(arg)) |byte| {
+            if (byte == '\\') {
+                slashes += 1;
+                continue;
+            }
+            try writer.splatByteAll('\\', if (byte == '"') slashes * 2 + 1 else slashes);
+            try writer.writeByte(byte);
+            slashes = 0;
+        }
+        try writer.splatByteAll('\\', slashes * 2);
+        try writer.writeByte('"');
+    }
+    return .{ .vector = try std.unicode.wtf8ToWtf16LeAlloc(allocator, command_line.written()) };
+}
+
 test "Config: adblockLists splits comma-separated paths" {
     var config = try Config.init(std.testing.allocator, "test", .{ .serve = .{
         .adblock_lists = "easylist.txt,easyprivacy.txt",
@@ -1484,9 +1511,11 @@ test "Config: advertiseHost preserves concrete host when not a wildcard" {
 }
 
 test "Config: parseArgs refuses a mozilla user-agent" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
     log.expectLog(&.{.app});
     const argv = [_][*:0]const u8{ "lightpanda", "fetch", "--user-agent", "mozilla/1.0" };
-    const proc_args: std.process.Args = .{ .vector = &argv };
+    const proc_args = try testProcessArgs(arena.allocator(), &argv);
     try std.testing.expectError(error.InvalidArgument, parseArgs(std.testing.allocator, proc_args));
 }
 
@@ -1497,20 +1526,20 @@ test "Config: parseArgs --http-version" {
 
     {
         const argv = [_][*:0]const u8{ "lightpanda", "fetch", "https://example.com" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         const config = try parseArgs(arena.allocator(), proc_args);
         try std.testing.expectEqual(.auto, config.httpVersion());
     }
     {
         const argv = [_][*:0]const u8{ "lightpanda", "serve", "--http-version", "1.1" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         const config = try parseArgs(arena.allocator(), proc_args);
         try std.testing.expectEqual(.@"1.1", config.httpVersion());
     }
     {
         log.expectLog(&.{.app});
         const argv = [_][*:0]const u8{ "lightpanda", "fetch", "--http-version", "3" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         try std.testing.expectError(error.InvalidArgument, parseArgs(std.testing.allocator, proc_args));
     }
 }
@@ -1522,32 +1551,32 @@ test "Config: parseArgs --http-session-timeout" {
 
     {
         const argv = [_][*:0]const u8{ "lightpanda", "serve" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         const config = try parseArgs(arena.allocator(), proc_args);
         try std.testing.expectEqual(60_000, config.httpSessionTimeout());
     }
     {
         // 0 disables the reaper
         const argv = [_][*:0]const u8{ "lightpanda", "serve", "--http-session-timeout", "0" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         const config = try parseArgs(arena.allocator(), proc_args);
         try std.testing.expectEqual(null, config.httpSessionTimeout());
     }
     {
         const argv = [_][*:0]const u8{ "lightpanda", "mcp" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         const config = try parseArgs(arena.allocator(), proc_args);
         try std.testing.expectEqual(null, config.httpSessionTimeout());
     }
     {
         const argv = [_][*:0]const u8{ "lightpanda", "mcp", "--http-session-timeout", "600" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         const config = try parseArgs(arena.allocator(), proc_args);
         try std.testing.expectEqual(600_000, config.httpSessionTimeout());
     }
     {
         const argv = [_][*:0]const u8{ "lightpanda", "mcp", "--http-session-timeout", "0" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         const config = try parseArgs(arena.allocator(), proc_args);
         try std.testing.expectEqual(null, config.httpSessionTimeout());
     }
@@ -1559,34 +1588,34 @@ test "Config: mcp --tools and --list-tools" {
 
     {
         const argv = [_][*:0]const u8{ "lightpanda", "mcp" };
-        const config = try parseArgs(arena.allocator(), .{ .vector = &argv });
+        const config = try parseArgs(arena.allocator(), try testProcessArgs(arena.allocator(), &argv));
         try std.testing.expectEqual(McpTools.full, config.mcpTools());
         try std.testing.expectEqual(false, config.mode.mcp.list_tools);
     }
     {
         const argv = [_][*:0]const u8{ "lightpanda", "mcp", "--tools", "goto,tree" };
-        const config = try parseArgs(arena.allocator(), .{ .vector = &argv });
+        const config = try parseArgs(arena.allocator(), try testProcessArgs(arena.allocator(), &argv));
         try std.testing.expectEqual(try lp.mcp.tools.parseEnabled("tree,goto"), config.mcpTools());
     }
     {
         const argv = [_][*:0]const u8{ "lightpanda", "mcp", "--tools", "goto", "--tools", "tree,goto" };
-        const config = try parseArgs(arena.allocator(), .{ .vector = &argv });
+        const config = try parseArgs(arena.allocator(), try testProcessArgs(arena.allocator(), &argv));
         try std.testing.expectEqual(try lp.mcp.tools.parseEnabled("goto,tree"), config.mcpTools());
     }
     {
         log.expectLog(&.{.app});
         const argv = [_][*:0]const u8{ "lightpanda", "mcp", "--tools", "goto,markdwon" };
-        try std.testing.expectError(error.InvalidArgument, parseArgs(arena.allocator(), .{ .vector = &argv }));
+        try std.testing.expectError(error.InvalidArgument, parseArgs(arena.allocator(), try testProcessArgs(arena.allocator(), &argv)));
     }
     {
         const argv = [_][*:0]const u8{ "lightpanda", "mcp", "--list-tools" };
-        const config = try parseArgs(arena.allocator(), .{ .vector = &argv });
+        const config = try parseArgs(arena.allocator(), try testProcessArgs(arena.allocator(), &argv));
         try std.testing.expectEqual(true, config.mode.mcp.list_tools);
     }
     {
         log.expectLog(&.{.app});
         const argv = [_][*:0]const u8{ "lightpanda", "mcp", "--tools" };
-        try std.testing.expectError(error.MissingArgument, parseArgs(arena.allocator(), .{ .vector = &argv }));
+        try std.testing.expectError(error.MissingArgument, parseArgs(arena.allocator(), try testProcessArgs(arena.allocator(), &argv)));
     }
 }
 
@@ -1605,7 +1634,7 @@ test "Config: httpMaxConcurrent default scales with --cdp-max-connections on ser
         .{ .argv = &.{ "lightpanda", "mcp" }, .expected = 40 },
     };
     for (cases) |case| {
-        const proc_args: std.process.Args = .{ .vector = case.argv };
+        const proc_args = try testProcessArgs(arena.allocator(), case.argv);
         const config = try parseArgs(arena.allocator(), proc_args);
         try std.testing.expectEqual(case.expected, config.httpMaxConcurrent());
     }
@@ -1617,7 +1646,7 @@ test "Config: parseArgs --dump tells a url from a misspelt format" {
 
     {
         const argv = [_][*:0]const u8{ "lightpanda", "fetch", "--dump", "markdown.com" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         const config = try parseArgs(arena.allocator(), proc_args);
         try std.testing.expectEqual(.html, config.mode.fetch.dump);
         try std.testing.expectEqualStrings("markdown.com", config.mode.fetch.url.items[0]);
@@ -1625,7 +1654,7 @@ test "Config: parseArgs --dump tells a url from a misspelt format" {
     {
         log.expectLog(&.{.app});
         const argv = [_][*:0]const u8{ "lightpanda", "fetch", "--dump", "markdwon", "https://example.com" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         try std.testing.expectError(error.InvalidArgument, parseArgs(arena.allocator(), proc_args));
     }
 }
@@ -1636,14 +1665,14 @@ test "Config: parseArgs tells a url from a misspelt command" {
 
     {
         const argv = [_][*:0]const u8{ "lightpanda", "version.io" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         const config = try parseArgs(arena.allocator(), proc_args);
         try std.testing.expectEqualStrings("version.io", config.mode.fetch.url.items[0]);
     }
     {
         log.expectLog(&.{.app});
         const argv = [_][*:0]const u8{ "lightpanda", "versoin" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         try std.testing.expectError(error.UnknownCommand, parseArgs(arena.allocator(), proc_args));
     }
 }
@@ -1734,21 +1763,25 @@ test "Config: locale drives http_headers" {
 }
 
 test "Config: parseArgs refuses an invalid --locale and --timezone" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
     {
         log.expectLog(&.{.app});
         const argv = [_][*:0]const u8{ "lightpanda", "fetch", "--locale", "en_US" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         try std.testing.expectError(error.InvalidArgument, parseArgs(std.testing.allocator, proc_args));
     }
     {
         log.expectLog(&.{.app});
         const argv = [_][*:0]const u8{ "lightpanda", "fetch", "--timezone", "Europe/ Paris" };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         try std.testing.expectError(error.InvalidArgument, parseArgs(std.testing.allocator, proc_args));
     }
 }
 
 test "Config: parseArgs refuses an invalid --http-header" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
     const invalid = [_][*:0]const u8{
         // no colon to split on
         "not-a-header",
@@ -1768,7 +1801,7 @@ test "Config: parseArgs refuses an invalid --http-header" {
     for (invalid) |header| {
         log.expectLog(&.{.app});
         const argv = [_][*:0]const u8{ "lightpanda", "fetch", "--http-header", header };
-        const proc_args: std.process.Args = .{ .vector = &argv };
+        const proc_args = try testProcessArgs(arena.allocator(), &argv);
         try std.testing.expectError(error.InvalidArgument, parseArgs(std.testing.allocator, proc_args));
     }
 }
@@ -1785,7 +1818,7 @@ test "Config: parseArgs accumulates repeated list flags" {
         "--block-cidrs",      "-10.0.0.42/32",
         "http://example.com",
     };
-    const proc_args: std.process.Args = .{ .vector = &argv };
+    const proc_args = try testProcessArgs(arena.allocator(), &argv);
     const config = try parseArgs(arena.allocator(), proc_args);
 
     var paths = config.adblockLists().?;
@@ -1809,7 +1842,7 @@ test "Config: parseArgs collects --http-header" {
         "--http-header",      " \tX-Empty \t: \t",
         "http://example.com",
     };
-    const proc_args: std.process.Args = .{ .vector = &argv };
+    const proc_args = try testProcessArgs(arena.allocator(), &argv);
     const config = try parseArgs(arena.allocator(), proc_args);
 
     const headers = config.httpHeaders();
@@ -1995,7 +2028,7 @@ test "Config: parseArgs --load-resources defaults stylesheets on for mcp and age
         .{ .argv = &.{ "lightpanda", "fetch", "--load-resources", "beacon", "https://example.com" }, .stylesheet = false, .image = false, .beacon = true },
     };
     for (cases) |case| {
-        const config = try parseArgs(arena.allocator(), .{ .vector = case.argv });
+        const config = try parseArgs(arena.allocator(), try testProcessArgs(arena.allocator(), case.argv));
         const resources = config.loadResources();
         try std.testing.expectEqual(case.stylesheet, resources.stylesheet);
         try std.testing.expectEqual(case.image, resources.image);
@@ -2003,13 +2036,34 @@ test "Config: parseArgs --load-resources defaults stylesheets on for mcp and age
     }
 }
 
+const test_unix_socket = if (@import("builtin").os.tag == .windows) "C:/Temp/lp.sock" else "/tmp/lp.sock";
+
+test "Config: keeps the executable name for help and legacy arguments" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const executable = if (@import("builtin").os.tag == .windows)
+        "C:\\Lightpanda Build\\lightpanda.exe"
+    else
+        "/tmp/Lightpanda Build/lightpanda.exe";
+
+    for ([_][]const [*:0]const u8{
+        &.{ executable, "--help" },
+        &.{ executable, "serve", "--help" },
+        &.{ executable, "https://example.com" },
+    }) |argv| {
+        const config = try parseArgs(allocator, try testProcessArgs(allocator, argv));
+        try std.testing.expectEqualStrings("lightpanda.exe", config.exec_name);
+    }
+}
+
 test "Config: --unix-socket rejects TCP flags and bad paths" {
     log.expectLog(&.{ .app, .app, .app, .app, .app });
     var long: [120:0]u8 = @splat('a');
-    long[0] = '/';
+    @memcpy(long[0..test_unix_socket.len], test_unix_socket);
     const cases = [_][]const [*:0]const u8{
-        &.{ "lightpanda", "serve", "--unix-socket", "/tmp/lp.sock", "--port", "9322" },
-        &.{ "lightpanda", "serve", "--unix-socket", "/tmp/lp.sock", "--host", "127.0.0.1" },
+        &.{ "lightpanda", "serve", "--unix-socket", test_unix_socket, "--port", "9322" },
+        &.{ "lightpanda", "serve", "--unix-socket", test_unix_socket, "--host", "127.0.0.1" },
         &.{ "lightpanda", "serve", "--unix-socket", "lp.sock" },
         &.{ "lightpanda", "serve", "--unix-socket", "/tmp/lp:1.sock" },
         &.{ "lightpanda", "serve", "--unix-socket", &long },
@@ -2017,14 +2071,14 @@ test "Config: --unix-socket rejects TCP flags and bad paths" {
     for (cases) |vector| {
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
-        try std.testing.expectError(error.InvalidArgument, parseArgs(arena.allocator(), .{ .vector = vector }));
+        try std.testing.expectError(error.InvalidArgument, parseArgs(arena.allocator(), try testProcessArgs(arena.allocator(), vector)));
     }
 }
 
 test "Config: --unix-socket" {
-    const vector = [_][*:0]const u8{ "lightpanda", "serve", "--unix-socket", "/tmp/lp.sock", "--protocol", "webdriver" };
+    const vector = [_][*:0]const u8{ "lightpanda", "serve", "--unix-socket", test_unix_socket, "--protocol", "webdriver" };
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const config = try parseArgs(arena.allocator(), .{ .vector = &vector });
-    try std.testing.expectEqualStrings("/tmp/lp.sock", config.mode.serve.unix_socket.?);
+    const config = try parseArgs(arena.allocator(), try testProcessArgs(arena.allocator(), &vector));
+    try std.testing.expectEqualStrings(test_unix_socket, config.mode.serve.unix_socket.?);
 }
